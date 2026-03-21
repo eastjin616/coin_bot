@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     signal_buy_threshold: float = 80.0
     signal_sell_threshold: float = 20.0
 
+    # 기능 플래그 (false로 설정하면 해당 기능 비활성화)
+    enable_volatility_filter: bool = True
+    enable_dynamic_threshold: bool = True
+
     # 운영 설정
     cooldown_minutes: int = 5
     poll_interval_seconds: int = 60
