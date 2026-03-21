@@ -101,6 +101,21 @@ class Orchestrator:
 
         return (rsi_lo <= rsi <= rsi_hi) and (volume_trend == "보합") and (ma_diff_pct < 0.5)
 
+    def _get_dynamic_thresholds(self, indicators: dict) -> tuple[float, float]:
+        """RSI 기반 동적 buy_threshold 반환. sell_threshold는 항상 고정.
+        RSI < 30 (과매도) → 65%, RSI > 70 (과매수) → 85%, 중립 → config 기본값.
+        """
+        rsi = indicators.get("rsi", 50)
+
+        if rsi < 30:
+            buy_threshold = 65.0
+        elif rsi > 70:
+            buy_threshold = 85.0
+        else:
+            buy_threshold = self.settings.signal_buy_threshold
+
+        return buy_threshold, self.settings.signal_sell_threshold
+
     def _check_profit_stop(self, symbol: str) -> str | None:
         """익절/손절 조건 체크. 해당되면 'SELL' 반환, 아니면 None"""
         try:

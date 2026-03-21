@@ -83,3 +83,43 @@ class TestShouldSkipAnalysis:
         indicators = {"rsi": 50, "volume_trend": "보합", "ma5": 100.0, "ma20": 100.1}
         # _last_analyzed에 항목 없음 (한 번도 분석 안 됨)
         assert self.orc._should_skip_analysis("KRW-XRP", indicators) is False
+
+
+class TestGetDynamicThresholds:
+    """_get_dynamic_thresholds RSI 기반 동적 임계값 테스트"""
+
+    def setup_method(self):
+        self.orc = make_orchestrator()
+
+    # RSI < 30 → 과매도 → 낮은 buy threshold (더 쉽게 매수)
+    def test_oversold_rsi_lowers_buy_threshold(self):
+        buy_t, sell_t = self.orc._get_dynamic_thresholds({"rsi": 25})
+        assert buy_t == 65.0
+        assert sell_t == 20.0
+
+    # RSI > 70 → 과매수 → 높은 buy threshold (더 어렵게 매수)
+    def test_overbought_rsi_raises_buy_threshold(self):
+        buy_t, sell_t = self.orc._get_dynamic_thresholds({"rsi": 75})
+        assert buy_t == 85.0
+        assert sell_t == 20.0
+
+    # RSI 중립 → config 기본값 사용
+    def test_neutral_rsi_uses_config_default(self):
+        buy_t, sell_t = self.orc._get_dynamic_thresholds({"rsi": 50})
+        assert buy_t == 80.0  # mock settings 기본값
+        assert sell_t == 20.0
+
+    # RSI 경계값: 정확히 30 → 중립으로 처리
+    def test_rsi_exactly_30_is_neutral(self):
+        buy_t, _ = self.orc._get_dynamic_thresholds({"rsi": 30})
+        assert buy_t == 80.0
+
+    # RSI 경계값: 정확히 70 → 중립으로 처리
+    def test_rsi_exactly_70_is_neutral(self):
+        buy_t, _ = self.orc._get_dynamic_thresholds({"rsi": 70})
+        assert buy_t == 80.0
+
+    # indicators 빈 dict → rsi 기본값 50 사용 → 중립
+    def test_empty_indicators_uses_neutral(self):
+        buy_t, sell_t = self.orc._get_dynamic_thresholds({})
+        assert buy_t == 80.0
