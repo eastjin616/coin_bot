@@ -18,3 +18,4 @@ pytz==2024.1
 google-generativeai==0.8.3
 anthropic==0.40.0
 openai>=1.50.0
+groq>=0.9.0
