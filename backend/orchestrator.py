@@ -75,6 +75,31 @@ class Orchestrator:
         self.stock_executor = StockExecutor()
         self.coin_executor = CoinExecutor()
         self.scheduler = AsyncIOScheduler()
+        # 변동성 필터: 코인별 마지막 GPT 분석 시각 (in-memory)
+        self._last_analyzed: dict[str, datetime] = {}
+        self._max_skip_minutes: int = 30
+
+    def _should_skip_analysis(self, symbol: str, indicators: dict) -> bool:
+        """변동성 낮으면 True 반환 → GPT 호출 skip.
+        지표 없거나 30분 이상 연속 skip이면 False → 강제 분석.
+        """
+        if not indicators:
+            return False
+
+        last = self._last_analyzed.get(symbol)
+        if last and (datetime.now() - last).total_seconds() > self._max_skip_minutes * 60:
+            return False
+
+        rsi = indicators.get("rsi", 50)
+        volume_trend = indicators.get("volume_trend", "보합")
+        ma5 = indicators.get("ma5", 0)
+        ma20 = indicators.get("ma20", 1)
+        ma_diff_pct = abs(ma5 - ma20) / ma20 * 100 if ma20 else 0
+
+        tight_coins = ["KRW-BTC", "KRW-ETH"]
+        rsi_lo, rsi_hi = (48, 52) if symbol in tight_coins else (45, 55)
+
+        return (rsi_lo <= rsi <= rsi_hi) and (volume_trend == "보합") and (ma_diff_pct < 0.5)
 
     def _check_profit_stop(self, symbol: str) -> str | None:
         """익절/손절 조건 체크. 해당되면 'SELL' 반환, 아니면 None"""
