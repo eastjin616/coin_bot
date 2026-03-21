@@ -29,12 +29,27 @@
   - 체결 완료 후 trades, positions 테이블에 자동 저장
   - JWT 인증은 pyupbit 라이브러리가 처리
 
+### Task 5: 주식 실행 엔진 (2026-03-21)
+- backend/execution/stock_executor.py: yfinance 기반 주식 자동매매 실행
+  - API 키 없을 시 모의 모드로 동작 (실제 주문 없이 로그 기록)
+  - buy(): 현재가 조회 → 잔고의 50%로 수량 계산 → 시장가 매수
+  - sell(): DB 포지션 조회 → 보유 수량 전체 매도
+  - 체결 완료 후 trades, positions 테이블에 자동 저장
+
+### Task 6: 오케스트레이터 (2026-03-21)
+- backend/orchestrator.py: 주기적 폴링 → AI 신호 판단 → 자동 주문
+  - APScheduler로 설정된 주기(기본 60초)마다 감시 종목 순회
+  - 주식: KST 09:00~15:30 평일에만 실행 (pytz 시간대 처리)
+  - 코인: 24시간 365일 실행
+  - 신호 판단: buy_prob ≥ 80% → BUY, buy_prob < 20% → SELL, 나머지 → HOLD
+  - 쿨다운: 종목별 N분 (BUY/SELL 각각 독립), PostgreSQL에 영속화
+  - 매매 성공 시 텔레그램 알림 자동 발송
+  - is_on_cooldown(), update_cooldown(), get_watchlist() 헬퍼 함수 포함
+
 ## 🔄 진행 중인 작업
-- Task 5: 주식 실행 엔진
+- Task 7: FastAPI 백엔드
 
 ## 📋 남은 작업
-- Task 5: 주식 실행 엔진
-- Task 6: 오케스트레이터
 - Task 7: FastAPI 백엔드
 - Task 8: React 프론트엔드
 
