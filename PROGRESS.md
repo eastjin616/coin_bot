@@ -59,9 +59,16 @@
 - backend/routers/signals.py: GET /api/signals — 최근 AI 신호 조회 (market 필터 옵션)
 - backend/routers/balance.py: GET /api/balance — 주식/코인 잔고 조회
 
-## 🔄 진행 중인 작업
-- Task 8: React 프론트엔드
+### Task 8: React 프론트엔드 (2026-03-21)
+- frontend/: Vite + React + TypeScript + Tailwind CSS 기반 UI
+- frontend/src/api/client.ts: 백엔드 API 호출 함수 모음 (axios 기반)
+- frontend/src/components/StockTab.tsx: 주식 탭 — 감시 종목 추가/삭제 + 최근 AI 신호 표시
+- frontend/src/components/CoinTab.tsx: 코인 탭 — 감시 종목 추가/삭제 + 최근 AI 신호 표시
+- frontend/src/App.tsx: 메인 앱 — 탭 네비게이션 + 실시간 잔고 표시 + 전체 매매 내역 테이블
+  - 주식/코인/매매내역 3개 탭 구성
+  - 헤더에 주식/코인 잔고 실시간 표시
+  - 1분마다 자동 새로고침 (setInterval)
 
 ## 📋 남은 작업
-- Task 8: React 프론트엔드
+없음 — 전체 구현 완료
 
