@@ -62,19 +62,24 @@ async def _balance_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     try:
+        from backend.execution.coin_executor import CoinExecutor
+        executor = CoinExecutor()
+        krw_balance = executor.get_balance_krw()
+
         conn = get_db_conn()
         cur = conn.cursor()
         cur.execute("SELECT market, symbol, entry_price, quantity FROM positions")
         rows = cur.fetchall()
         conn.close()
 
-        if not rows:
-            await update.message.reply_text("📭 현재 보유 중인 포지션이 없습니다.")
-            return
+        lines = [f"💰 업비트 잔고: {krw_balance:,.0f}원\n"]
 
-        lines = ["💼 현재 포지션\n"]
-        for market, symbol, entry_price, quantity in rows:
-            lines.append(f"• [{market.upper()}] {symbol}: {quantity:.6f} @ {entry_price:,.0f}원")
+        if rows:
+            lines.append("💼 보유 포지션")
+            for market, symbol, entry_price, quantity in rows:
+                lines.append(f"• {symbol}: {quantity:.6f} @ {entry_price:,.0f}원")
+        else:
+            lines.append("📭 보유 중인 코인 없음")
 
         await update.message.reply_text("\n".join(lines))
     except Exception as e:
