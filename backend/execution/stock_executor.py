@@ -60,7 +60,7 @@ class StockExecutor:
             if not row:
                 logger.warning(f"보유 수량 없음: {symbol}")
                 return None
-            quantity = float(row[0])
+            quantity = float(row["quantity"])
         except Exception as e:
             logger.error(f"포지션 조회 실패: {e}")
             return None

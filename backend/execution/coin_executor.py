@@ -40,20 +40,23 @@ class CoinExecutor:
             logger.error(f"코인 잔고 조회 실패: {e}")
             return 0.0
 
+    def buy_fixed_amount(self, symbol: str, confidence: float, amount_krw: float) -> dict | None:
+        """시장가 매수 — 금액 직접 지정"""
+        return self._execute_buy(symbol, confidence, amount_krw)
+
     def buy(self, symbol: str, confidence: float) -> dict | None:
         """시장가 매수. 잔고의 order_size_ratio만큼 매수."""
-        settings = self.settings
-
-        # 최소 주문 금액 체크 (업비트: 5,000원)
         krw_balance = self.get_balance_krw()
-        order_amount = krw_balance * settings.order_size_ratio
+        order_amount = krw_balance * self.settings.order_size_ratio
+        return self._execute_buy(symbol, confidence, order_amount)
 
+    def _execute_buy(self, symbol: str, confidence: float, order_amount: float) -> dict | None:
+        """실제 매수 실행"""
         if order_amount < 5000:
             logger.warning(f"주문 금액 부족: {order_amount:.0f}원 (최소 5,000원)")
             return None
 
         if not self.upbit:
-            # 모의 모드
             logger.info(f"[모의] {symbol} 매수 {order_amount:.0f}원")
             return {"symbol": symbol, "action": "BUY", "amount": order_amount, "price": 0, "quantity": 0}
 
