@@ -64,7 +64,7 @@ async def _balance_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         from backend.execution.coin_executor import CoinExecutor
         executor = CoinExecutor()
-        krw_balance = executor.get_balance_krw()
+        krw_balance = float(executor.get_balance_krw() or 0)
 
         conn = get_db_conn()
         cur = conn.cursor()
