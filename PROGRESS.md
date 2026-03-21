@@ -91,7 +91,21 @@
   - 최근 AI 신호 표시
 - api/client.ts: testBuy(), testSell() 함수 추가
 
+### LLM Vision AI 엔진 (2026-03-21)
+- backend/ai/llm_engine.py: Gemini Vision / Claude Vision API 기반 차트 분석 엔진
+  - GEMINI_API_KEY 설정 시 Gemini 1.5 Flash로 차트 분석 (무료 티어 사용 가능)
+  - ANTHROPIC_API_KEY 설정 시 Claude Haiku로 차트 분석
+  - 키 없을 시 랜덤 예측 모드로 폴백 (기존 동작 유지)
+  - 캔들 차트 이미지를 base64로 인코딩 후 LLM에 전송
+  - 매수 확률(0~100%) 응답 파싱
+- backend/orchestrator.py: VisionEngine → LLMEngine으로 교체
+- backend/config.py: GEMINI_API_KEY, ANTHROPIC_API_KEY 설정 추가
+- requirements.txt: google-generativeai==0.8.3, anthropic==0.40.0 추가
+- .env.example: LLM API 키 안내 추가
+
 ## 📋 다음 작업 (예정)
-- 기술적 지표(이동평균선 등) 기반 신호 로직 강화 (현재 랜덤 예측 모드)
-- AI 모델 학습 또는 기술적 지표로 대체
+- Gemini API 키 발급 후 실제 AI 매매 신호 테스트
+  - 발급 위치: https://aistudio.google.com/apikey (무료)
+  - .env에 GEMINI_API_KEY= 입력 후 서버 재시작
+- 실제 매매 테스트 (10,000원으로 업비트 BTC 매수 테스트)
 

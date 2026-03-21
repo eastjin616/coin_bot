@@ -5,7 +5,7 @@ from datetime import datetime, time as dtime
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from backend.config import get_settings
 from backend.database import get_db_conn
-from backend.ai.vision_engine import VisionEngine
+from backend.ai.llm_engine import LLMEngine
 from backend.ai.chart_generator import generate_chart
 from backend.execution.stock_executor import StockExecutor
 from backend.execution.coin_executor import CoinExecutor
@@ -31,7 +31,7 @@ def is_on_cooldown(symbol: str, action: str, cooldown_minutes: int) -> bool:
         conn.close()
         if not row:
             return False
-        last_executed = row[0].replace(tzinfo=pytz.utc)
+        last_executed = row["last_executed_at"].replace(tzinfo=pytz.utc)
         elapsed = (datetime.now(pytz.utc) - last_executed).total_seconds() / 60
         return elapsed < cooldown_minutes
     except Exception as e:
@@ -58,7 +58,7 @@ def get_watchlist(market: str) -> list:
         cur.execute("SELECT symbol, name FROM watchlist WHERE market = %s AND active = TRUE", (market,))
         rows = cur.fetchall()
         conn.close()
-        return [{"symbol": r[0], "name": r[1]} for r in rows]
+        return [{"symbol": r["symbol"], "name": r["name"]} for r in rows]
     except Exception as e:
         logger.error(f"감시 종목 조회 실패: {e}")
         return []
@@ -66,8 +66,10 @@ def get_watchlist(market: str) -> list:
 class Orchestrator:
     def __init__(self):
         self.settings = get_settings()
-        model_path = self.settings.vision_model_path or None
-        self.vision = VisionEngine(model_path=model_path)
+        self.vision = LLMEngine(
+            gemini_api_key=self.settings.gemini_api_key,
+            anthropic_api_key=self.settings.anthropic_api_key,
+        )
         self.stock_executor = StockExecutor()
         self.coin_executor = CoinExecutor()
         self.scheduler = AsyncIOScheduler()
@@ -76,6 +78,7 @@ class Orchestrator:
         try:
             chart_path = generate_chart(market, symbol)
             buy_prob = self.vision.predict(chart_path)
+            logger.info(f"AI 신호 [{symbol}]: {buy_prob:.1f}% ({'Gemini' if self.settings.gemini_api_key else 'Claude' if self.settings.anthropic_api_key else '랜덤'})")
 
             buy_threshold = self.settings.signal_buy_threshold
             sell_threshold = self.settings.signal_sell_threshold

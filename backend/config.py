@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     # AI 모델 (없으면 랜덤 예측 모드)
     vision_model_path: str = ""
 
+    # LLM API 키 (차트 분석용)
+    gemini_api_key: str = ""
+    anthropic_api_key: str = ""
+
     # 신호 임계값
     signal_buy_threshold: float = 80.0
     signal_sell_threshold: float = 20.0
