@@ -69,6 +69,7 @@ class Orchestrator:
         self.vision = LLMEngine(
             gemini_api_key=self.settings.gemini_api_key,
             anthropic_api_key=self.settings.anthropic_api_key,
+            openai_api_key=self.settings.openai_api_key,
         )
         self.stock_executor = StockExecutor()
         self.coin_executor = CoinExecutor()

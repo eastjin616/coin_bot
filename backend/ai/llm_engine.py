@@ -51,14 +51,18 @@ def _parse_probability(text: str) -> float:
 
 
 class LLMEngine:
-    """Gemini Vision 또는 Claude Vision API로 차트 분석 후 매수 확률 반환"""
+    """OpenAI / Gemini / Claude Vision API로 차트 분석 후 매수 확률 반환"""
 
-    def __init__(self, gemini_api_key: str = "", anthropic_api_key: str = ""):
+    def __init__(self, gemini_api_key: str = "", anthropic_api_key: str = "", openai_api_key: str = ""):
         self.gemini_api_key = gemini_api_key
         self.anthropic_api_key = anthropic_api_key
+        self.openai_api_key = openai_api_key
         self._provider = self._detect_provider()
 
     def _detect_provider(self) -> str:
+        if self.openai_api_key:
+            logger.info("✅ LLM 엔진: OpenAI GPT-4o Vision 사용")
+            return "openai"
         if self.gemini_api_key:
             logger.info("✅ LLM 엔진: Gemini Vision 사용")
             return "gemini"
@@ -76,11 +80,44 @@ class LLMEngine:
         """차트 이미지를 분석해 매수 확률(0~100) 반환"""
         if self._provider == "random":
             return random.uniform(0, 100)
+        if self._provider == "openai":
+            return self._predict_openai(image_path)
         if self._provider == "gemini":
             return self._predict_gemini(image_path)
         if self._provider == "claude":
             return self._predict_claude(image_path)
         return 50.0
+
+    def _predict_openai(self, image_path: str) -> float:
+        try:
+            from openai import OpenAI
+
+            client = OpenAI(api_key=self.openai_api_key)
+            img_data, mime_type = _read_image_base64(image_path)
+
+            response = client.chat.completions.create(
+                model="gpt-4.1-mini",
+                max_tokens=10,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": f"data:{mime_type};base64,{img_data}"},
+                            },
+                            {"type": "text", "text": ANALYSIS_PROMPT},
+                        ],
+                    }
+                ],
+            )
+            text = response.choices[0].message.content
+            prob = _parse_probability(text)
+            logger.info(f"OpenAI 분석 결과: {prob:.1f}% (원문: {text.strip()!r})")
+            return prob
+        except Exception as e:
+            logger.error(f"OpenAI API 오류: {e}")
+            return 50.0
 
     def _predict_gemini(self, image_path: str) -> float:
         try:
@@ -88,7 +125,7 @@ class LLMEngine:
             from google.generativeai.types import HarmCategory, HarmBlockThreshold
 
             genai.configure(api_key=self.gemini_api_key)
-            model = genai.GenerativeModel("gemini-1.5-flash")
+            model = genai.GenerativeModel("gemini-2.0-flash")
 
             img_data, mime_type = _read_image_base64(image_path)
             image_part = {"mime_type": mime_type, "data": img_data}
