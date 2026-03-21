@@ -76,8 +76,8 @@ async def _balance_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if rows:
             lines.append("💼 보유 포지션")
-            for market, symbol, entry_price, quantity in rows:
-                lines.append(f"• {symbol}: {float(quantity):.6f} @ {float(entry_price):,.0f}원")
+            for row in rows:
+                lines.append(f"• {row['symbol']}: {float(row['quantity']):.6f} @ {float(row['entry_price']):,.0f}원")
         else:
             lines.append("📭 보유 중인 코인 없음")
 

@@ -188,10 +188,11 @@ ssh -i ~/Downloads/coin-bot-key.pem ubuntu@43.203.227.201 "sudo systemctl status
 ## 🎉 현재 동작 중 (2026-03-21)
 - EC2 서버: http://43.203.227.201 (24시간)
 - **5분마다** BTC/ETH/SOL/XRP/DOGE GPT-4.1-mini 차트 분석 중 (1분→5분, 비용 1/5)
-- 텔레그램 @sdjtrader_bot 매매 알림 대기 중
-- 업비트 잔고 ~25,000원 운용 중
+- 텔레그램 @sdjtrader_bot 매매 알림 + /balance 잔고조회
+- 업비트 잔고 운용 중
 - 매수 임계값 70%, 매도 임계값 20%
-- 매수 금액: 고정 5,000원씩 (잔고 50% 방식 → 고정 금액으로 변경)
+- 매수 금액: 고정 5,000원씩
+- 익절 +10%, 손절 -5% 자동 매도 (.env에서 조정 가능)
 - OpenAI 잔액 소진 시 Groq llama-3.2-vision으로 자동 폴백 (무료)
 
 ## 📋 개선 아이디어
