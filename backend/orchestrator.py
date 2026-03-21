@@ -144,7 +144,7 @@ class Orchestrator:
 
     async def analyze_and_trade(self, market: str, symbol: str, name: str):
         try:
-            # 익절/손절 먼저 체크
+            # 1. 익절/손절 먼저 체크 (변경 없음)
             if market == "coin":
                 forced_action = self._check_profit_stop(symbol)
                 if forced_action:
@@ -155,15 +155,35 @@ class Orchestrator:
                                                confidence=100.0, price=result.get("price", 0), quantity=result.get("quantity", 0))
                     return
 
-            chart_path = generate_chart(market, symbol)
+            # 2. 지표 먼저 조회 (chart 생성 전에 필터 판단)
             indicators = get_coin_indicators(symbol) if market == "coin" else {}
+
+            # 3. 변동성 필터: 코인만 적용, 낮으면 GPT + 차트 생성 전부 skip
+            if self.settings.enable_volatility_filter and market == "coin" and self._should_skip_analysis(symbol, indicators):
+                rsi_val = indicators.get('rsi', 'N/A')
+                rsi_str = f"{rsi_val:.1f}" if isinstance(rsi_val, (int, float)) else str(rsi_val)
+                logger.info(f"SKIP [{symbol}]: RSI={rsi_str} vol={indicators.get('volume_trend')} → GPT 호출 생략")
+                return
+
+            # 4. 필터 통과 → 차트 생성 → GPT 호출
+            chart_path = generate_chart(market, symbol)
             buy_prob = self.vision.predict(chart_path, indicators=indicators)
+            self._last_analyzed[symbol] = datetime.now()  # skip 타이머 리셋
+
             provider = "OpenAI" if self.settings.openai_api_key else ("Gemini" if self.settings.gemini_api_key else "랜덤")
             logger.info(f"AI 신호 [{symbol}]: {buy_prob:.1f}% ({provider}) RSI={indicators.get('rsi', 'N/A')}")
 
-            buy_threshold = self.settings.signal_buy_threshold
-            sell_threshold = self.settings.signal_sell_threshold
+            # 5. 동적 임계값 적용
+            if self.settings.enable_dynamic_threshold and market == "coin":
+                buy_threshold, sell_threshold = self._get_dynamic_thresholds(indicators)
+                rsi_val = indicators.get('rsi', 'N/A')
+                rsi_str = f"{rsi_val:.1f}" if isinstance(rsi_val, (int, float)) else str(rsi_val)
+                logger.info(f"동적 임계값 [{symbol}]: RSI={rsi_str} → buy={buy_threshold}% sell={sell_threshold}%")
+            else:
+                buy_threshold = self.settings.signal_buy_threshold
+                sell_threshold = self.settings.signal_sell_threshold
 
+            # 6. 매매 결정
             if buy_prob >= buy_threshold:
                 action = "BUY"
             elif buy_prob < sell_threshold:
@@ -176,6 +196,7 @@ class Orchestrator:
                 logger.debug(f"쿨다운 중: {symbol} {action}")
                 return
 
+            # 7. 실행 (변경 없음)
             result = None
             if market == "stock":
                 result = self.stock_executor.buy(symbol, buy_prob) if action == "BUY" else self.stock_executor.sell(symbol, buy_prob)
@@ -185,12 +206,8 @@ class Orchestrator:
             if result:
                 update_cooldown(symbol, action)
                 await send_trade_alert(
-                    market=market,
-                    symbol=name or symbol,
-                    action=action,
-                    confidence=buy_prob,
-                    price=result.get("price", 0),
-                    quantity=result.get("quantity", 0)
+                    market=market, symbol=name or symbol, action=action,
+                    confidence=buy_prob, price=result.get("price", 0), quantity=result.get("quantity", 0)
                 )
                 logger.info(f"✅ {action} 완료: {symbol} ({buy_prob:.1f}%)")
         except Exception as e:
