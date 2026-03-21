@@ -6,7 +6,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from backend.config import get_settings
 from backend.database import get_db_conn
 from backend.ai.llm_engine import LLMEngine
-from backend.ai.chart_generator import generate_chart
+from backend.ai.chart_generator import generate_chart, get_coin_indicators
 from backend.execution.stock_executor import StockExecutor
 from backend.execution.coin_executor import CoinExecutor
 from backend.telegram_bot import send_trade_alert
@@ -78,8 +78,10 @@ class Orchestrator:
     async def analyze_and_trade(self, market: str, symbol: str, name: str):
         try:
             chart_path = generate_chart(market, symbol)
-            buy_prob = self.vision.predict(chart_path)
-            logger.info(f"AI 신호 [{symbol}]: {buy_prob:.1f}% ({'Gemini' if self.settings.gemini_api_key else 'Claude' if self.settings.anthropic_api_key else '랜덤'})")
+            indicators = get_coin_indicators(symbol) if market == "coin" else {}
+            buy_prob = self.vision.predict(chart_path, indicators=indicators)
+            provider = "OpenAI" if self.settings.openai_api_key else ("Gemini" if self.settings.gemini_api_key else "랜덤")
+            logger.info(f"AI 신호 [{symbol}]: {buy_prob:.1f}% ({provider}) RSI={indicators.get('rsi', 'N/A')}")
 
             buy_threshold = self.settings.signal_buy_threshold
             sell_threshold = self.settings.signal_sell_threshold

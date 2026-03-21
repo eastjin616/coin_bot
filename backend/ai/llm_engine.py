@@ -76,19 +76,34 @@ class LLMEngine:
     def is_active(self) -> bool:
         return self._provider != "random"
 
-    def predict(self, image_path: str) -> float:
-        """차트 이미지를 분석해 매수 확률(0~100) 반환"""
+    def predict(self, image_path: str, indicators: dict | None = None) -> float:
+        """차트 이미지를 분석해 매수 확률(0~100) 반환. indicators: 기술적 지표 딕셔너리"""
         if self._provider == "random":
             return random.uniform(0, 100)
+        prompt = self._build_prompt(indicators)
         if self._provider == "openai":
-            return self._predict_openai(image_path)
+            return self._predict_openai(image_path, prompt)
         if self._provider == "gemini":
-            return self._predict_gemini(image_path)
+            return self._predict_gemini(image_path, prompt)
         if self._provider == "claude":
-            return self._predict_claude(image_path)
+            return self._predict_claude(image_path, prompt)
         return 50.0
 
-    def _predict_openai(self, image_path: str) -> float:
+    def _build_prompt(self, indicators: dict | None) -> str:
+        if not indicators:
+            return ANALYSIS_PROMPT
+        ind_text = (
+            f"\n\n[기술적 지표 데이터]\n"
+            f"- 현재가: {indicators.get('current_price', 'N/A'):,.0f}\n"
+            f"- MA5: {indicators.get('ma5', 'N/A'):,.0f} / MA20: {indicators.get('ma20', 'N/A'):,.0f}\n"
+            f"- MA5 vs MA20: {indicators.get('ma5_signal', 'N/A')}\n"
+            f"- 현재가 vs MA20: {indicators.get('price_vs_ma20', 'N/A')}\n"
+            f"- RSI(14): {indicators.get('rsi', 'N/A'):.1f}\n"
+            f"- 거래량 추세: {indicators.get('volume_trend', 'N/A')}\n"
+        )
+        return ANALYSIS_PROMPT + ind_text
+
+    def _predict_openai(self, image_path: str, prompt: str) -> float:
         try:
             from openai import OpenAI
 
@@ -106,7 +121,7 @@ class LLMEngine:
                                 "type": "image_url",
                                 "image_url": {"url": f"data:{mime_type};base64,{img_data}"},
                             },
-                            {"type": "text", "text": ANALYSIS_PROMPT},
+                            {"type": "text", "text": prompt},
                         ],
                     }
                 ],
@@ -119,7 +134,7 @@ class LLMEngine:
             logger.error(f"OpenAI API 오류: {e}")
             return 50.0
 
-    def _predict_gemini(self, image_path: str) -> float:
+    def _predict_gemini(self, image_path: str, prompt: str = ANALYSIS_PROMPT) -> float:
         try:
             import google.generativeai as genai
             from google.generativeai.types import HarmCategory, HarmBlockThreshold
@@ -138,7 +153,7 @@ class LLMEngine:
             }
 
             response = model.generate_content(
-                [ANALYSIS_PROMPT, image_part],
+                [prompt, image_part],
                 safety_settings=safety,
             )
             text = response.text
@@ -149,7 +164,7 @@ class LLMEngine:
             logger.error(f"Gemini API 오류: {e}")
             return 50.0
 
-    def _predict_claude(self, image_path: str) -> float:
+    def _predict_claude(self, image_path: str, prompt: str = ANALYSIS_PROMPT) -> float:
         try:
             import anthropic
 
@@ -171,7 +186,7 @@ class LLMEngine:
                                     "data": img_data,
                                 },
                             },
-                            {"type": "text", "text": ANALYSIS_PROMPT},
+                            {"type": "text", "text": prompt},
                         ],
                     }
                 ],
