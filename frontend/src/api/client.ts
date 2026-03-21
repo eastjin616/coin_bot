@@ -11,3 +11,12 @@ export const addWatchlist = (item: { market: string; symbol: string; name: strin
   api.post('/api/watchlist', item).then(r => r.data)
 export const removeWatchlist = (market: string, symbol: string) =>
   api.delete(`/api/watchlist/${market}/${symbol}`).then(r => r.data)
+
+export const testBuy = (symbol: string, amount: number) =>
+  api.post(`/api/test/buy/${symbol}`, null, { params: { amount } }).then(r => r.data)
+
+export const testSell = (symbol: string) =>
+  api.post(`/api/test/sell/${symbol}`).then(r => r.data)
+
+export const getCoinPrice = (symbol: string) =>
+  api.get(`/api/coin/price/${symbol}`).then(r => r.data)
