@@ -46,10 +46,22 @@
   - 매매 성공 시 텔레그램 알림 자동 발송
   - is_on_cooldown(), update_cooldown(), get_watchlist() 헬퍼 함수 포함
 
+### Task 7: FastAPI 백엔드 + 라우터 (2026-03-21)
+- backend/main.py: FastAPI 앱 진입점
+  - lifespan으로 시작 시 DB 테이블 생성 + 오케스트레이터 자동 시작/종료
+  - CORS 전체 허용 (개발 편의)
+  - /api/trades, /api/watchlist, /api/signals, /api/balance 라우터 등록
+- backend/routers/__init__.py: 라우터 패키지 초기화 파일
+- backend/routers/trades.py: GET /api/trades — 최근 매매 내역 조회 (limit 파라미터)
+- backend/routers/watchlist.py: GET/POST/DELETE /api/watchlist — 감시 종목 관리
+  - POST: 중복 종목은 ON CONFLICT로 active=TRUE 복구
+  - DELETE: 소프트 삭제 (active=FALSE)
+- backend/routers/signals.py: GET /api/signals — 최근 AI 신호 조회 (market 필터 옵션)
+- backend/routers/balance.py: GET /api/balance — 주식/코인 잔고 조회
+
 ## 🔄 진행 중인 작업
-- Task 7: FastAPI 백엔드
+- Task 8: React 프론트엔드
 
 ## 📋 남은 작업
-- Task 7: FastAPI 백엔드
 - Task 8: React 프론트엔드
 
