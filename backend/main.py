@@ -17,7 +17,26 @@ async def lifespan(app: FastAPI):
     create_tables()
     orchestrator = Orchestrator()
     orchestrator.start()
+
+    # 텔레그램 봇 polling 시작
+    from backend.telegram_bot import setup_bot
+    from backend.config import get_settings
+    settings = get_settings()
+    if settings.telegram_bot_token:
+        bot_app = setup_bot()
+        await bot_app.initialize()
+        await bot_app.start()
+        await bot_app.updater.start_polling()
+        logging.getLogger(__name__).info("✅ 텔레그램 봇 polling 시작")
+    else:
+        bot_app = None
+
     yield
+
+    if bot_app:
+        await bot_app.updater.stop()
+        await bot_app.stop()
+        await bot_app.shutdown()
     if orchestrator:
         orchestrator.stop()
 

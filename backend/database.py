@@ -1,5 +1,4 @@
-import psycopg2
-from psycopg2.extras import RealDictCursor
+import psycopg
 
 from backend.config import get_settings
 
@@ -7,7 +6,7 @@ from backend.config import get_settings
 def get_db_conn():
     """PostgreSQL 연결 객체를 반환합니다."""
     settings = get_settings()
-    conn = psycopg2.connect(settings.database_url, cursor_factory=RealDictCursor)
+    conn = psycopg.connect(settings.database_url, row_factory=psycopg.rows.dict_row)
     return conn
 
 

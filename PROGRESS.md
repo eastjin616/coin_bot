@@ -69,6 +69,20 @@
   - 헤더에 주식/코인 잔고 실시간 표시
   - 1분마다 자동 새로고침 (setInterval)
 
-## 📋 남은 작업
-없음 — 전체 구현 완료
+### 핫픽스: DB 드라이버 + 텔레그램 polling (2026-03-21)
+- requirements.txt: psycopg2-binary → psycopg[binary] (Python 3.13 호환)
+- backend/database.py: psycopg2 → psycopg3 문법으로 마이그레이션
+- backend/main.py: 서버 시작 시 텔레그램 봇 polling 자동 시작
+  - /start, /balance 명령어 실제 응답 확인 완료 ✅
+- .gitignore: .env 파일 깃 추적 제외 (API 키 보안)
+
+## 🎉 실제 동작 확인 (2026-03-21)
+- PostgreSQL DB 연결 및 테이블 생성 완료
+- 업비트 API 연결 완료
+- 텔레그램 봇 @sdjtrader_bot 실제 응답 확인
+- 오케스트레이터 1분 주기 자동 실행 중
+
+## 📋 다음 작업 (예정)
+- 기술적 지표(이동평균선 등) 기반 신호 로직 강화 (현재 랜덤 예측 모드)
+- AI 모델 학습 또는 기술적 지표로 대체
 
