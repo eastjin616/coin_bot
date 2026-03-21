@@ -226,11 +226,6 @@ ssh -i ~/Downloads/coin-bot-key.pem ubuntu@43.203.227.201 "sudo systemctl status
 
 ## 🔖 미결 사항 (TODO)
 
-### 🔴 급함
-- [ ] **OpenAI 잔액 알림**: 잔액 $1 미만 시 텔레그램 경고 알림 발송
-  - 현재 $6.64 남음 (2026-03-21 기준), 소진 전 알림 없음
-  - `/balance` 응답에 잔액 경고 포함하거나 별도 텔레그램 푸시
-
 ### 🟡 중요
 - [ ] **성과 대시보드**: React 프론트엔드를 EC2에 배포
   - 프론트 이미 구현되어 있으나 로컬 전용 (http://localhost:5174)
@@ -238,6 +233,7 @@ ssh -i ~/Downloads/coin-bot-key.pem ubuntu@43.203.227.201 "sudo systemctl status
   - nginx로 프론트(80) + 백엔드(8000) 프록시 구성 필요
 
 ### 🟢 여유 있을 때
+- [ ] **OpenAI → Groq 전환 텔레그램 알림**: 자동 폴백은 되지만 알림은 없음 (로그로 확인 가능, 급하지 않음)
 - [ ] **EC2 보안그룹 강화**: SSH(22)/HTTP(80) 현재 0.0.0.0/0 전체 오픈
   - SSH는 본인 IP만 허용으로 변경 권장
 - [ ] **재시작 후 GPT 버스트 완화**: 서비스 재시작 시 `_last_analyzed` 초기화 → 5개 코인 동시 GPT 호출
