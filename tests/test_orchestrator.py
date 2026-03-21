@@ -30,6 +30,7 @@ class TestShouldSkipAnalysis:
 
     # 케이스 1: RSI 중립 + 거래량 보합 + MA 평탄 → skip
     def test_skip_when_all_neutral(self):
+        self.orc._last_analyzed["KRW-XRP"] = datetime.now()  # 방금 분석했다고 설정
         indicators = {"rsi": 50, "volume_trend": "보합", "ma5": 100.0, "ma20": 100.3}
         assert self.orc._should_skip_analysis("KRW-XRP", indicators) is True
 
@@ -60,8 +61,9 @@ class TestShouldSkipAnalysis:
     # 케이스 7: BTC는 더 좁은 중립 범위 — RSI 47이면 skip 안 함 (XRP는 skip)
     def test_btc_uses_tight_rsi_range(self):
         indicators = {"rsi": 47, "volume_trend": "보합", "ma5": 100.0, "ma20": 100.1}
-        assert self.orc._should_skip_analysis("KRW-BTC", indicators) is False
-        assert self.orc._should_skip_analysis("KRW-XRP", indicators) is True
+        self.orc._last_analyzed["KRW-XRP"] = datetime.now()  # XRP는 방금 분석 → skip 가능
+        assert self.orc._should_skip_analysis("KRW-BTC", indicators) is False  # BTC: 47 tight range 밖 → False
+        assert self.orc._should_skip_analysis("KRW-XRP", indicators) is True   # XRP: 47 wide range 안 → True
 
     # 케이스 8: 30분 이상 스킵됐으면 강제 분석 (skip 안 함)
     def test_force_analysis_after_max_skip_duration(self):
@@ -75,3 +77,9 @@ class TestShouldSkipAnalysis:
         indicators = {"rsi": 50, "volume_trend": "보합", "ma5": 100.0, "ma20": 100.1}
         self.orc._last_analyzed["KRW-XRP"] = datetime.now() - timedelta(minutes=29)
         assert self.orc._should_skip_analysis("KRW-XRP", indicators) is True
+
+    # 케이스 10: 한 번도 분석 안 된 코인은 skip 안 함 (첫 분석 강제)
+    def test_no_skip_when_never_analyzed(self):
+        indicators = {"rsi": 50, "volume_trend": "보합", "ma5": 100.0, "ma20": 100.1}
+        # _last_analyzed에 항목 없음 (한 번도 분석 안 됨)
+        assert self.orc._should_skip_analysis("KRW-XRP", indicators) is False

@@ -87,7 +87,7 @@ class Orchestrator:
             return False
 
         last = self._last_analyzed.get(symbol)
-        if last and (datetime.now() - last).total_seconds() > self._max_skip_minutes * 60:
+        if not last or (datetime.now() - last).total_seconds() > self._max_skip_minutes * 60:
             return False
 
         rsi = indicators.get("rsi", 50)
