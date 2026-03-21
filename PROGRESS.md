@@ -20,11 +20,19 @@
   - /balance: 현재 보유 포지션 조회 (허용된 사용자만)
   - 토큰/chat_id 미설정 시 경고 로그 후 건너뜀 (앱 중단 없음)
 
+### Task 4: 코인 실행 엔진 (업비트) (2026-03-21)
+- backend/execution/__init__.py: 패키지 초기화 파일
+- backend/execution/coin_executor.py: 업비트 API 기반 자동매매 실행
+  - API 키 없을 시 모의 모드로 동작 (실제 주문 없이 로그만 기록)
+  - buy(): 잔고의 order_size_ratio만큼 시장가 매수, 최소 주문 5,000원 체크
+  - sell(): 보유 수량 전체 시장가 매도
+  - 체결 완료 후 trades, positions 테이블에 자동 저장
+  - JWT 인증은 pyupbit 라이브러리가 처리
+
 ## 🔄 진행 중인 작업
-- Task 4: 코인 실행 엔진 (업비트)
+- Task 5: 주식 실행 엔진
 
 ## 📋 남은 작업
-- Task 4: 코인 실행 엔진 (업비트)
 - Task 5: 주식 실행 엔진
 - Task 6: 오케스트레이터
 - Task 7: FastAPI 백엔드
