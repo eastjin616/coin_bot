@@ -1,5 +1,25 @@
 # coin_bot 구현 현황
 
+## 2026-03-21: API 비용 최적화 + 매매 전략 업그레이드
+
+### 변경 내용
+- **변동성 필터 추가**: RSI 중립(45~55) + 거래량 보합 + MA 차이 0.5% 미만이면 GPT 호출 skip
+  - BTC/ETH: 더 좁은 중립 범위(48~52) → 더 자주 분석
+  - 최대 30분 연속 skip 방지 (기회 완전 누락 차단)
+  - 한 번도 분석 안 된 코인은 항상 분석 (초기 상태 버그 수정 포함)
+- **RSI 기반 동적 임계값**: RSI<30 → 65%, 중립 → 80%, RSI>70 → 85%
+- **호출 순서 개선**: indicators 먼저 → 필터 → chart 생성 → GPT (불필요한 pyupbit 호출 제거)
+- **롤백 플래그**: .env에서 `ENABLE_VOLATILITY_FILTER=false` / `ENABLE_DYNAMIC_THRESHOLD=false` 설정 후 서비스 재시작으로 비활성화 가능
+
+### 예상 효과
+- GPT 호출 평균 37% 감소 (횡보장 최대 50%)
+- 과매도 구간 매수 기회 확대, 과매수 추격 매수 방지
+
+### 테스트
+- 16개 단위 테스트 추가 (tests/test_orchestrator.py)
+- TestShouldSkipAnalysis (10개): 변동성 필터 로직 검증
+- TestGetDynamicThresholds (6개): 동적 임계값 로직 검증
+
 ## 🚀 실행 방법
 
 ### 사전 조건
