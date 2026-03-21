@@ -45,10 +45,12 @@ class CoinExecutor:
         return self._execute_buy(symbol, confidence, amount_krw)
 
     def buy(self, symbol: str, confidence: float) -> dict | None:
-        """시장가 매수. 잔고의 order_size_ratio만큼 매수."""
+        """시장가 매수. 잔고가 충분하면 고정 5,000원 매수."""
         krw_balance = self.get_balance_krw()
-        order_amount = krw_balance * self.settings.order_size_ratio
-        return self._execute_buy(symbol, confidence, order_amount)
+        if krw_balance < 5000:
+            logger.warning(f"잔고 부족: {krw_balance:.0f}원 (최소 5,000원 필요)")
+            return None
+        return self._execute_buy(symbol, confidence, 5000)
 
     def _execute_buy(self, symbol: str, confidence: float, order_amount: float) -> dict | None:
         """실제 매수 실행"""
