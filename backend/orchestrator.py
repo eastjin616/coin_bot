@@ -76,8 +76,45 @@ class Orchestrator:
         self.coin_executor = CoinExecutor()
         self.scheduler = AsyncIOScheduler()
 
+    def _check_profit_stop(self, symbol: str) -> str | None:
+        """익절/손절 조건 체크. 해당되면 'SELL' 반환, 아니면 None"""
+        try:
+            import pyupbit
+            conn = get_db_conn()
+            cur = conn.cursor()
+            cur.execute("SELECT entry_price FROM positions WHERE market = 'coin' AND symbol = %s", (symbol,))
+            row = cur.fetchone()
+            conn.close()
+            if not row:
+                return None
+            entry_price = float(row["entry_price"])
+            current_price = pyupbit.get_current_price(symbol)
+            if not current_price:
+                return None
+            change_pct = (current_price - entry_price) / entry_price * 100
+            if change_pct >= self.settings.take_profit_percent:
+                logger.info(f"익절 조건 [{symbol}]: +{change_pct:.1f}% (기준: +{self.settings.take_profit_percent}%)")
+                return "SELL"
+            if change_pct <= -self.settings.stop_loss_percent:
+                logger.info(f"손절 조건 [{symbol}]: {change_pct:.1f}% (기준: -{self.settings.stop_loss_percent}%)")
+                return "SELL"
+        except Exception as e:
+            logger.error(f"익절/손절 체크 오류: {e}")
+        return None
+
     async def analyze_and_trade(self, market: str, symbol: str, name: str):
         try:
+            # 익절/손절 먼저 체크
+            if market == "coin":
+                forced_action = self._check_profit_stop(symbol)
+                if forced_action:
+                    result = self.coin_executor.sell(symbol, 100.0)
+                    if result:
+                        update_cooldown(symbol, "SELL")
+                        await send_trade_alert(market=market, symbol=name or symbol, action="SELL",
+                                               confidence=100.0, price=result.get("price", 0), quantity=result.get("quantity", 0))
+                    return
+
             chart_path = generate_chart(market, symbol)
             indicators = get_coin_indicators(symbol) if market == "coin" else {}
             buy_prob = self.vision.predict(chart_path, indicators=indicators)
