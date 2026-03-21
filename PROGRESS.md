@@ -1,5 +1,82 @@
 # coin_bot 구현 현황
 
+## 🚀 실행 방법
+
+### 사전 조건
+- Python 3.13, Node.js, PostgreSQL (brew 설치)
+- `.env` 파일 설정 완료 (아래 참고)
+
+### 1. PostgreSQL 시작
+```bash
+brew services start postgresql@16
+```
+
+### 2. 백엔드 서버 시작
+```bash
+cd /Users/seodongjin/Documents/GitHub/coin_bot
+
+# 패키지 설치 (처음 한 번만)
+pip install -r requirements.txt
+
+# 서버 실행 (포트 8002)
+uvicorn backend.main:app --port 8002
+```
+서버가 뜨면 자동으로:
+- DB 테이블 생성
+- 오케스트레이터 시작 (1분마다 AI 분석)
+- 텔레그램 봇 polling 시작
+
+### 3. 프론트엔드 시작 (별도 터미널)
+```bash
+cd /Users/seodongjin/Documents/GitHub/coin_bot/frontend
+npm install   # 처음 한 번만
+npm run dev
+```
+브라우저에서 http://localhost:5174 접속
+
+### 4. 백그라운드로 돌리고 싶을 때
+```bash
+# 백엔드 백그라운드 실행
+uvicorn backend.main:app --port 8002 > /tmp/coinbot.log 2>&1 &
+
+# 로그 실시간 확인
+tail -f /tmp/coinbot.log
+
+# 서버 종료
+lsof -ti:8002 | xargs kill -9
+```
+
+### 5. .env 파일 설정 항목
+```
+DATABASE_URL=postgresql://seodongjin:1234@localhost:5432/coinbot
+UPBIT_ACCESS_KEY=업비트_액세스_키
+UPBIT_SECRET_KEY=업비트_시크릿_키
+TELEGRAM_BOT_TOKEN=텔레그램_봇_토큰
+TELEGRAM_ALLOWED_CHAT_IDS=텔레그램_chat_id
+OPENAI_API_KEY=OpenAI_API_키           ← GPT-4.1-mini로 차트 분석
+GEMINI_API_KEY=Gemini_API_키           ← (선택) Gemini 사용 시
+SIGNAL_BUY_THRESHOLD=80.0             ← 이 값 이상이면 자동 매수
+SIGNAL_SELL_THRESHOLD=20.0            ← 이 값 미만이면 자동 매도
+COOLDOWN_MINUTES=5                    ← 같은 종목 재매매 대기 시간
+POLL_INTERVAL_SECONDS=60              ← AI 분석 주기 (초)
+ORDER_SIZE_RATIO=0.5                  ← 잔고의 몇 %를 1회 주문에 사용
+COIN_BUDGET_KRW=50000                 ← 모의모드 시 사용되는 가상 잔고
+```
+
+### 6. API 엔드포인트
+| 주소 | 설명 |
+|------|------|
+| GET /api/balance | 현재 잔고 조회 |
+| GET /api/watchlist | 감시 종목 목록 |
+| POST /api/watchlist | 종목 추가 (body: market, symbol, name) |
+| DELETE /api/watchlist/{market}/{symbol} | 종목 삭제 |
+| GET /api/trades | 매매 내역 조회 |
+| GET /api/signals | AI 신호 내역 |
+| POST /api/test/buy/{symbol}?amount=10000 | 수동 매수 테스트 |
+| POST /api/test/sell/{symbol} | 수동 매도 테스트 |
+
+---
+
 ## ✅ 완료된 작업
 
 ### Task 1: 프로젝트 기반 설정 (2026-03-21)
@@ -9,103 +86,62 @@
 - backend/database.py: PostgreSQL 연결 + 테이블 자동 생성 (trades, watchlist, cooldowns, positions)
 
 ### Task 2: AI 엔진 + 차트 생성기 (2026-03-21)
-- backend/ai/vision_engine.py: notsure VisionEngine 재사용 + 모델 없을 시 랜덤 예측 모드
-- backend/ai/chart_generator.py: yfinance(주식)/pyupbit(코인) 차트 이미지 생성
+- backend/ai/vision_engine.py: CNN 기반 VisionEngine (학습 모델 없을 시 랜덤 모드)
+- backend/ai/chart_generator.py: yfinance(주식)/pyupbit(코인) 캔들차트 이미지 생성
+  - RSI(14), MA5, MA20, 거래량 추세 기술지표 계산 함수 포함
 
 ### Task 3: 텔레그램 봇 (2026-03-21)
 - backend/telegram_bot.py: 매매 알림 및 명령어 처리
-  - send_trade_alert(): 매수/매도 실행 시 포맷된 알림 메시지 전송 (주식: 📈/📉 아이콘, 코인: 🪙 아이콘)
-  - send_message(): 허용된 chat_id에만 메시지 전송 (보안)
+  - send_trade_alert(): 매수/매도 실행 시 포맷된 알림 메시지 전송
   - /start: 봇 소개 메시지
   - /balance: 현재 보유 포지션 조회 (허용된 사용자만)
-  - 토큰/chat_id 미설정 시 경고 로그 후 건너뜀 (앱 중단 없음)
+  - 텔레그램 봇: @sdjtrader_bot
 
-### Task 4: 코인 실행 엔진 (업비트) (2026-03-21)
-- backend/execution/__init__.py: 패키지 초기화 파일
-- backend/execution/coin_executor.py: 업비트 API 기반 자동매매 실행
-  - API 키 없을 시 모의 모드로 동작 (실제 주문 없이 로그만 기록)
-  - buy(): 잔고의 order_size_ratio만큼 시장가 매수, 최소 주문 5,000원 체크
+### Task 4: 코인 실행 엔진 - 업비트 (2026-03-21)
+- backend/execution/coin_executor.py: 업비트 API 기반 자동매매
+  - buy(): 잔고의 order_size_ratio만큼 시장가 매수, 최소 5,000원 체크
+  - buy_fixed_amount(): 금액 직접 지정 매수
   - sell(): 보유 수량 전체 시장가 매도
-  - 체결 완료 후 trades, positions 테이블에 자동 저장
-  - JWT 인증은 pyupbit 라이브러리가 처리
+  - 체결 후 trades, positions 테이블 자동 저장
 
 ### Task 5: 주식 실행 엔진 (2026-03-21)
-- backend/execution/stock_executor.py: yfinance 기반 주식 자동매매 실행
-  - API 키 없을 시 모의 모드로 동작 (실제 주문 없이 로그 기록)
-  - buy(): 현재가 조회 → 잔고의 50%로 수량 계산 → 시장가 매수
-  - sell(): DB 포지션 조회 → 보유 수량 전체 매도
-  - 체결 완료 후 trades, positions 테이블에 자동 저장
+- backend/execution/stock_executor.py: yfinance 기반 주식 자동매매 (모의 모드)
 
 ### Task 6: 오케스트레이터 (2026-03-21)
 - backend/orchestrator.py: 주기적 폴링 → AI 신호 판단 → 자동 주문
-  - APScheduler로 설정된 주기(기본 60초)마다 감시 종목 순회
-  - 주식: KST 09:00~15:30 평일에만 실행 (pytz 시간대 처리)
+  - APScheduler로 60초마다 감시 종목 순회
+  - 주식: KST 09:00~15:30 평일에만 실행
   - 코인: 24시간 365일 실행
-  - 신호 판단: buy_prob ≥ 80% → BUY, buy_prob < 20% → SELL, 나머지 → HOLD
-  - 쿨다운: 종목별 N분 (BUY/SELL 각각 독립), PostgreSQL에 영속화
+  - 신호 판단: buy_prob ≥ 80% → BUY / buy_prob < 20% → SELL / 나머지 → HOLD
+  - 쿨다운: 종목별 5분 (BUY/SELL 각각 독립), DB에 영속화
   - 매매 성공 시 텔레그램 알림 자동 발송
-  - is_on_cooldown(), update_cooldown(), get_watchlist() 헬퍼 함수 포함
 
 ### Task 7: FastAPI 백엔드 + 라우터 (2026-03-21)
-- backend/main.py: FastAPI 앱 진입점
-  - lifespan으로 시작 시 DB 테이블 생성 + 오케스트레이터 자동 시작/종료
-  - CORS 전체 허용 (개발 편의)
-  - /api/trades, /api/watchlist, /api/signals, /api/balance 라우터 등록
-- backend/routers/__init__.py: 라우터 패키지 초기화 파일
-- backend/routers/trades.py: GET /api/trades — 최근 매매 내역 조회 (limit 파라미터)
-- backend/routers/watchlist.py: GET/POST/DELETE /api/watchlist — 감시 종목 관리
-  - POST: 중복 종목은 ON CONFLICT로 active=TRUE 복구
-  - DELETE: 소프트 삭제 (active=FALSE)
-- backend/routers/signals.py: GET /api/signals — 최근 AI 신호 조회 (market 필터 옵션)
-- backend/routers/balance.py: GET /api/balance — 주식/코인 잔고 조회
+- backend/main.py: FastAPI 앱 진입점, lifespan으로 오케스트레이터 + 텔레그램 자동 시작
+- backend/routers/trades.py, watchlist.py, signals.py, balance.py, test_trade.py
 
 ### Task 8: React 프론트엔드 (2026-03-21)
-- frontend/: Vite + React + TypeScript + Tailwind CSS 기반 UI
-- frontend/src/api/client.ts: 백엔드 API 호출 함수 모음 (axios 기반)
-- frontend/src/components/StockTab.tsx: 주식 탭 — 감시 종목 추가/삭제 + 최근 AI 신호 표시
-- frontend/src/components/CoinTab.tsx: 코인 탭 — 감시 종목 추가/삭제 + 최근 AI 신호 표시
-- frontend/src/App.tsx: 메인 앱 — 탭 네비게이션 + 실시간 잔고 표시 + 전체 매매 내역 테이블
-  - 주식/코인/매매내역 3개 탭 구성
-  - 헤더에 주식/코인 잔고 실시간 표시
-  - 1분마다 자동 새로고침 (setInterval)
-
-### 핫픽스: DB 드라이버 + 텔레그램 polling (2026-03-21)
-- requirements.txt: psycopg2-binary → psycopg[binary] (Python 3.13 호환)
-- backend/database.py: psycopg2 → psycopg3 문법으로 마이그레이션
-- backend/main.py: 서버 시작 시 텔레그램 봇 polling 자동 시작
-  - /start, /balance 명령어 실제 응답 확인 완료 ✅
-- .gitignore: .env 파일 깃 추적 제외 (API 키 보안)
-
-## 🎉 실제 동작 확인 (2026-03-21)
-- PostgreSQL DB 연결 및 테이블 생성 완료
-- 업비트 API 연결 완료
-- 텔레그램 봇 @sdjtrader_bot 실제 응답 확인
-- 오케스트레이터 1분 주기 자동 실행 중
-
-### 프론트엔드 고도화 (2026-03-21)
-- App.tsx: 주식 탭 비활성화 ("준비중" 표시), 코인/매매내역 2탭 구성
-- CoinTab.tsx: 완전 개편
-  - 잔고 카드: 현재 KRW 잔고 표시
-  - 수동 매수 패널: 종목 선택 + 금액 입력 + 빠른 금액 버튼 (5천/1만/3만/5만)
-  - 감시 종목 목록: 종목별 매도 버튼 추가
-  - 최근 AI 신호 표시
-- api/client.ts: testBuy(), testSell() 함수 추가
+- frontend/: Vite + React + TypeScript + Tailwind CSS
+- CoinTab.tsx: 잔고 카드 + 수동 매수 패널 (금액 입력, 빠른 버튼) + 감시 종목 매도 버튼
+- App.tsx: 주식 탭 비활성화, 코인/매매내역 2탭, 헤더 잔고 실시간 표시, 1분 자동 새로고침
 
 ### LLM Vision AI 엔진 (2026-03-21)
-- backend/ai/llm_engine.py: Gemini Vision / Claude Vision API 기반 차트 분석 엔진
-  - GEMINI_API_KEY 설정 시 Gemini 1.5 Flash로 차트 분석 (무료 티어 사용 가능)
-  - ANTHROPIC_API_KEY 설정 시 Claude Haiku로 차트 분석
-  - 키 없을 시 랜덤 예측 모드로 폴백 (기존 동작 유지)
-  - 캔들 차트 이미지를 base64로 인코딩 후 LLM에 전송
-  - 매수 확률(0~100%) 응답 파싱
-- backend/orchestrator.py: VisionEngine → LLMEngine으로 교체
-- backend/config.py: GEMINI_API_KEY, ANTHROPIC_API_KEY 설정 추가
-- requirements.txt: google-generativeai==0.8.3, anthropic==0.40.0 추가
-- .env.example: LLM API 키 안내 추가
+- backend/ai/llm_engine.py: GPT-4.1-mini / Gemini / Claude Vision으로 차트 분석
+  - 우선순위: OpenAI → Gemini → Claude → 랜덤 폴백
+  - 캔들차트 이미지(base64) + RSI/MA/거래량 텍스트 지표를 함께 LLM에 전송
+  - 매수 확률 0~100% 파싱
+- 실제 동작 확인: BTC 70%, ETH 70%, SOL 65%, XRP 60%, DOGE 60% ✅
+- 감시 종목: BTC, ETH, SOL, XRP, DOGE (5개)
+- 업비트 잔고 10,000원 입금 후 실전 대기 중
 
-## 📋 다음 작업 (예정)
-- Gemini API 키 발급 후 실제 AI 매매 신호 테스트
-  - 발급 위치: https://aistudio.google.com/apikey (무료)
-  - .env에 GEMINI_API_KEY= 입력 후 서버 재시작
-- 실제 매매 테스트 (10,000원으로 업비트 BTC 매수 테스트)
+## 🎉 현재 동작 중 (2026-03-21)
+- 백엔드: localhost:8002
+- 프론트엔드: localhost:5174
+- 1분마다 5개 코인 GPT-4.1-mini 차트 분석 중
+- 텔레그램 @sdjtrader_bot 매매 알림 대기 중
+- 업비트 잔고 10,000원 — 신호 발생 시 자동 매수 예정
 
+## 📋 개선 아이디어
+- 임계값 조정 (현재 80% BUY — 시장 상황에 따라 70%로 낮출 수 있음)
+- 분봉 단위 변경 (현재 1시간봉 → 15분봉으로 더 빠른 반응)
+- 손절/익절 자동화 (현재 AI 신호에만 의존)
