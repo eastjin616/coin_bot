@@ -16,7 +16,7 @@ def get_watchlist():
     cur.execute("SELECT id, market, symbol, name, active FROM watchlist ORDER BY market, symbol")
     rows = cur.fetchall()
     conn.close()
-    return [{"id": r[0], "market": r[1], "symbol": r[2], "name": r[3], "active": r[4]} for r in rows]
+    return [{"id": r["id"], "market": r["market"], "symbol": r["symbol"], "name": r["name"], "active": r["active"]} for r in rows]
 
 @router.post("")
 def add_watchlist(item: WatchlistItem):

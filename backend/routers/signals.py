@@ -19,7 +19,7 @@ def get_signals(market: str = None):
     rows = cur.fetchall()
     conn.close()
     return [
-        {"id": r[0], "market": r[1], "symbol": r[2], "action": r[3],
-         "confidence": r[4], "executed_at": r[5].isoformat() if r[5] else None}
+        {"id": r["id"], "market": r["market"], "symbol": r["symbol"], "action": r["action"],
+         "confidence": r["confidence"], "executed_at": r["executed_at"].isoformat() if r["executed_at"] else None}
         for r in rows
     ]

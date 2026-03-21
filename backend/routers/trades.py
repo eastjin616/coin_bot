@@ -14,8 +14,8 @@ def get_trades(limit: int = 50):
     rows = cur.fetchall()
     conn.close()
     return [
-        {"id": r[0], "market": r[1], "symbol": r[2], "action": r[3],
-         "confidence": r[4], "price": float(r[5] or 0), "quantity": float(r[6] or 0),
-         "executed_at": r[7].isoformat() if r[7] else None}
+        {"id": r["id"], "market": r["market"], "symbol": r["symbol"], "action": r["action"],
+         "confidence": r["confidence"], "price": float(r["price"] or 0), "quantity": float(r["quantity"] or 0),
+         "executed_at": r["executed_at"].isoformat() if r["executed_at"] else None}
         for r in rows
     ]
