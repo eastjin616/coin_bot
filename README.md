@@ -15,7 +15,7 @@ GPT-4.1-mini Vision 기반 코인 자동매매 시스템.
 
 ## 감시 종목
 
-BTC, ETH, SOL, XRP, DOGE — 5분마다 순회
+BTC, ETH, SOL, XRP, DOGE — 1분마다 순회
 
 ## 기술 스택
 
@@ -31,7 +31,7 @@ BTC, ETH, SOL, XRP, DOGE — 5분마다 순회
 ## 동작 방식
 
 ```
-5분마다 BTC/ETH/SOL/XRP/DOGE 순회
+1분마다 BTC/ETH/SOL/XRP/DOGE 순회
   ↓
 기술지표 계산 (RSI, MA5/MA20, 거래량)
   ↓
@@ -68,7 +68,7 @@ uvicorn backend.main:app --port 8002
 
 서버 시작 시 자동으로:
 - DB 테이블 생성
-- 오케스트레이터 시작 (5분마다 AI 분석)
+- 오케스트레이터 시작 (1분마다 AI 분석)
 - 텔레그램 봇 polling 시작
 
 ## .env 설정
