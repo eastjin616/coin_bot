@@ -15,7 +15,7 @@ AI 기반 코인 자동매매 시스템.
 
 ## 감시 종목
 
-BTC, ETH, SOL, XRP, DOGE — 1분마다 순회
+BTC, ETH, SOL, XRP, DOGE, ADA, AVAX, DOT, LINK, TRX — 1분마다 순회
 
 ## 기술 스택
 
@@ -31,7 +31,7 @@ BTC, ETH, SOL, XRP, DOGE — 1분마다 순회
 ## 동작 방식
 
 ```
-1분마다 BTC/ETH/SOL/XRP/DOGE 순회
+1분마다 BTC/ETH/SOL/XRP/DOGE/ADA/AVAX/DOT/LINK/TRX 순회
   ↓
 기술지표 계산 (RSI, MA5/MA20, 거래량)
   ↓
