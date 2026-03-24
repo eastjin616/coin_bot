@@ -69,8 +69,11 @@ class CoinExecutor:
                 import time
                 time.sleep(0.5)
                 order_detail = self.upbit.get_order(result["uuid"])
-                price = float(order_detail.get("price") or order_detail.get("avg_price") or 0)
+                # avg_price = 코인 단가, price = 주문 KRW 금액 (단가 아님)
                 quantity = float(order_detail.get("executed_volume") or 0)
+                price = float(order_detail.get("avg_price") or 0)
+                if price == 0 and quantity > 0:
+                    price = order_amount / quantity  # 직접 계산
 
                 self._save_trade(symbol, "BUY", confidence, price, quantity)
                 self._save_position(symbol, price, quantity)
