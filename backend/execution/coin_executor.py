@@ -45,12 +45,12 @@ class CoinExecutor:
         return self._execute_buy(symbol, confidence, amount_krw)
 
     def buy(self, symbol: str, confidence: float) -> dict | None:
-        """시장가 매수. 잔고가 충분하면 고정 5,000원 매수."""
+        """시장가 매수. 잔고가 충분하면 고정 10,000원 매수."""
         krw_balance = self.get_balance_krw()
-        if krw_balance < 5000:
-            logger.warning(f"잔고 부족: {krw_balance:.0f}원 (최소 5,000원 필요)")
+        if krw_balance < 10000:
+            logger.warning(f"잔고 부족: {krw_balance:.0f}원 (최소 10,000원 필요)")
             return None
-        return self._execute_buy(symbol, confidence, 5000)
+        return self._execute_buy(symbol, confidence, 10000)
 
     def _execute_buy(self, symbol: str, confidence: float, order_amount: float) -> dict | None:
         """실제 매수 실행"""
@@ -126,9 +126,25 @@ class CoinExecutor:
             conn = get_db_conn()
             cur = conn.cursor()
             cur.execute(
-                "INSERT INTO positions (market, symbol, entry_price, quantity) VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING",
-                ("coin", symbol, price, quantity)
+                "SELECT entry_price, quantity FROM positions WHERE market = 'coin' AND symbol = %s",
+                (symbol,)
             )
+            row = cur.fetchone()
+            if row:
+                old_price = float(row["entry_price"])
+                old_qty = float(row["quantity"])
+                new_qty = old_qty + quantity
+                new_avg = (old_price * old_qty + price * quantity) / new_qty
+                cur.execute(
+                    "UPDATE positions SET entry_price = %s, quantity = %s WHERE market = 'coin' AND symbol = %s",
+                    (new_avg, new_qty, symbol)
+                )
+                logger.info(f"포지션 추가매수 [{symbol}]: 평균단가 {new_avg:.0f}원, 수량 {new_qty:.6f}")
+            else:
+                cur.execute(
+                    "INSERT INTO positions (market, symbol, entry_price, quantity) VALUES (%s, %s, %s, %s)",
+                    ("coin", symbol, price, quantity)
+                )
             conn.commit()
             conn.close()
         except Exception as e:
