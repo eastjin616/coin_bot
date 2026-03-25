@@ -68,7 +68,6 @@ def create_tables() -> None:
             cur.execute("""
                 INSERT INTO watchlist (market, symbol, name)
                 VALUES
-                    ('stock', '005930.KS', '삼성전자'),
                     ('coin', 'KRW-BTC', '비트코인')
                 ON CONFLICT (market, symbol) DO NOTHING;
             """)

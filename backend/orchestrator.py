@@ -1,26 +1,16 @@
 import asyncio
 import logging
 import pytz
-from datetime import datetime, time as dtime
+from datetime import datetime
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from backend.config import get_settings
 from backend.database import get_db_conn
 from backend.ai.llm_engine import LLMEngine
 from backend.ai.chart_generator import generate_chart, get_coin_indicators
-from backend.execution.stock_executor import StockExecutor
 from backend.execution.coin_executor import CoinExecutor
 from backend.telegram_bot import send_trade_alert
 
 logger = logging.getLogger(__name__)
-KST = pytz.timezone("Asia/Seoul")
-
-def is_stock_market_open() -> bool:
-    now_kst = datetime.now(KST)
-    if now_kst.weekday() >= 5:
-        return False
-    market_open = dtime(9, 0)
-    market_close = dtime(15, 30)
-    return market_open <= now_kst.time() <= market_close
 
 def is_on_cooldown(symbol: str, action: str, cooldown_minutes: int) -> bool:
     try:
@@ -72,7 +62,6 @@ class Orchestrator:
             openai_api_key=self.settings.openai_api_key,
             groq_api_key=self.settings.groq_api_key,
         )
-        self.stock_executor = StockExecutor()
         self.coin_executor = CoinExecutor()
         self.scheduler = AsyncIOScheduler()
         # 변동성 필터: 코인별 마지막 GPT 분석 시각 (in-memory)
@@ -196,12 +185,8 @@ class Orchestrator:
                 logger.debug(f"쿨다운 중: {symbol} {action}")
                 return
 
-            # 7. 실행 (변경 없음)
-            result = None
-            if market == "stock":
-                result = self.stock_executor.buy(symbol, buy_prob) if action == "BUY" else self.stock_executor.sell(symbol, buy_prob)
-            elif market == "coin":
-                result = self.coin_executor.buy(symbol, buy_prob) if action == "BUY" else self.coin_executor.sell(symbol, buy_prob)
+            # 7. 실행
+            result = self.coin_executor.buy(symbol, buy_prob) if action == "BUY" else self.coin_executor.sell(symbol, buy_prob)
 
             if result:
                 update_cooldown(symbol, action)
@@ -213,19 +198,12 @@ class Orchestrator:
         except Exception as e:
             logger.error(f"분석/매매 오류 [{symbol}]: {e}")
 
-    async def run_stock_cycle(self):
-        if not is_stock_market_open():
-            return
-        for item in get_watchlist("stock"):
-            await self.analyze_and_trade("stock", item["symbol"], item["name"] or item["symbol"])
-
     async def run_coin_cycle(self):
         for item in get_watchlist("coin"):
             await self.analyze_and_trade("coin", item["symbol"], item["name"] or item["symbol"])
 
     def start(self):
         interval = self.settings.poll_interval_seconds
-        self.scheduler.add_job(self.run_stock_cycle, "interval", seconds=interval, id="stock_cycle")
         self.scheduler.add_job(self.run_coin_cycle, "interval", seconds=interval, id="coin_cycle")
         self.scheduler.start()
         logger.info(f"✅ 오케스트레이터 시작 (폴링 주기: {interval}초)")
