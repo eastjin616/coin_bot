@@ -1,5 +1,18 @@
 # coin_bot 구현 현황
 
+## 2026-03-25: 주식 기능 완전 제거 + 코인 워치리스트 20개로 확대
+
+### 변경 내용
+- **주식 기능 완전 제거**: `StockExecutor`, `run_stock_cycle`, `is_stock_market_open` 코드 삭제
+  - `orchestrator.py`, `balance.py`, `database.py`에서 stock 관련 코드 전부 제거
+  - EC2 DB watchlist에서 삼성전자(005930.KS) 삭제
+  - 원인: yfinance `005930.KS possibly delisted` 에러가 1분마다 반복 발생 중이었음
+- **코인 워치리스트 10개 → 20개 확대**: Groq 무료 모델 전환으로 API 비용 부담 없어짐
+  - 추가: SUI, NEAR, HBAR, ICP, OP, ATOM, UNI, SHIB, LTC, BCH
+  - 현재 감시 목록: BTC, ETH, SOL, XRP, DOGE, ADA, AVAX, DOT, LINK, TRX, SUI, NEAR, HBAR, ICP, OP, ATOM, UNI, SHIB, LTC, BCH
+
+---
+
 ## 2026-03-24: entry_price 버그 수정 (익절/손절 비정상 동작 원인)
 
 ### 문제
