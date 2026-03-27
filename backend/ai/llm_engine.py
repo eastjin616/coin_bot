@@ -51,21 +51,17 @@ def _parse_probability(text: str) -> float:
 
 
 class LLMEngine:
-    """OpenAI / Groq / Gemini / Claude Vision API로 차트 분석 후 매수 확률 반환"""
+    """Groq / Gemini / Claude Vision API로 차트 분석 후 매수 확률 반환"""
 
     def __init__(self, gemini_api_key: str = "", anthropic_api_key: str = "", openai_api_key: str = "", groq_api_key: str = ""):
         self.gemini_api_key = gemini_api_key
         self.anthropic_api_key = anthropic_api_key
-        self.openai_api_key = openai_api_key
         self.groq_api_key = groq_api_key
         self._provider = self._detect_provider()
 
     def _detect_provider(self) -> str:
-        if self.openai_api_key:
-            logger.info("✅ LLM 엔진: OpenAI GPT-4.1-mini Vision 사용")
-            return "openai"
         if self.groq_api_key:
-            logger.info("✅ LLM 엔진: Groq llama-3.2-vision 사용 (무료)")
+            logger.info("✅ LLM 엔진: Groq llama-4-scout Vision 사용 (무료)")
             return "groq"
         if self.gemini_api_key:
             logger.info("✅ LLM 엔진: Gemini Vision 사용")
@@ -85,12 +81,6 @@ class LLMEngine:
         if self._provider == "random":
             return random.uniform(0, 100)
         prompt = self._build_prompt(indicators)
-        if self._provider == "openai":
-            result = self._predict_openai(image_path, prompt)
-            if result == 50.0 and self.groq_api_key:
-                logger.info("OpenAI 실패, Groq으로 폴백")
-                return self._predict_groq(image_path, prompt)
-            return result
         if self._provider == "groq":
             return self._predict_groq(image_path, prompt)
         if self._provider == "gemini":
@@ -152,7 +142,7 @@ class LLMEngine:
             img_data, mime_type = _read_image_base64(image_path)
 
             response = client.chat.completions.create(
-                model="llama-3.2-11b-vision-preview",
+                model="meta-llama/llama-4-scout-17b-16e-instruct",
                 max_tokens=10,
                 messages=[
                     {
