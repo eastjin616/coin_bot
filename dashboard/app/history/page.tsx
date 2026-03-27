@@ -1,6 +1,7 @@
 import TradeTable from "@/components/TradeTable";
 
-const BASE_URL = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+const BASE_URL = process.env.NEXT_PUBLIC_APP_URL ??
+  (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
 
 async function getAllTrades() {
   const res = await fetch(`${BASE_URL}/api/trades`, { cache: "no-store" });
