@@ -67,9 +67,11 @@ def get_trade_history_tool(days: str) -> str:
     except ValueError:
         n = 7
 
+    conn = None
     try:
         conn = get_db_conn()
         with conn.cursor() as cur:
+            # ORDER BY ASC 필수 — BUY/SELL 페어 매칭이 시간 순서에 의존함
             cur.execute(
                 """
                 SELECT symbol, action, price, quantity, confidence, executed_at
@@ -80,9 +82,11 @@ def get_trade_history_tool(days: str) -> str:
                 (n,),
             )
             rows = cur.fetchall()
-        conn.close()
     except Exception as e:
         return f"DB 조회 실패: {e}"
+    finally:
+        if conn:
+            conn.close()
 
     if not rows:
         return f"최근 {n}일간 매매 내역이 없습니다."
@@ -132,6 +136,8 @@ def get_market_signal_tool(coin: str) -> str:
     except Exception:
         current_price = 0
 
+    conn = None
+    row = None
     try:
         conn = get_db_conn()
         with conn.cursor() as cur:
@@ -144,9 +150,11 @@ def get_market_signal_tool(coin: str) -> str:
                 (symbol,),
             )
             row = cur.fetchone()
-        conn.close()
     except Exception:
         row = None
+    finally:
+        if conn:
+            conn.close()
 
     lines = [f"{symbol} 현재가: {current_price:,.0f}원"]
     if row:
@@ -154,9 +162,9 @@ def get_market_signal_tool(coin: str) -> str:
             f"최근 AI 분석 ({row['executed_at'].strftime('%m/%d %H:%M')}): "
             f"{row['action']} 신호, 확률 {row['confidence']:.0f}%"
         )
-        if row["confidence"] >= 70:
+        if row["action"] == "BUY" and row["confidence"] >= 70:
             lines.append("→ AI 판단: 매수 고려 구간")
-        elif row["confidence"] <= 20:
+        elif row["action"] == "SELL" or row["confidence"] <= 20:
             lines.append("→ AI 판단: 매도/관망 구간")
         else:
             lines.append("→ AI 판단: 중립, 관망 권장")
