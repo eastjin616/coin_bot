@@ -53,6 +53,10 @@ class Settings(BaseSettings):
     stop_loss_percent: float = 5.0
     take_profit_percent: float = 10.0
 
+    # 대시보드 인증 & CORS
+    dashboard_api_key: str = ""
+    vercel_origin: str = "https://localhost:3000"
+
     @property
     def allowed_chat_ids(self) -> List[int]:
         """허용된 텔레그램 chat_id 목록을 정수 리스트로 반환"""
