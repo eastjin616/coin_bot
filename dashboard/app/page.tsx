@@ -16,19 +16,33 @@ interface Portfolio {
   total_value: number;
 }
 
-const BASE_URL = process.env.NEXT_PUBLIC_APP_URL ??
-  (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
+const API_BASE_URL = process.env.API_BASE_URL ?? "http://localhost:8000";
+const API_KEY = process.env.API_KEY ?? "";
 
 async function getPortfolio(): Promise<Portfolio | null> {
-  const res = await fetch(`${BASE_URL}/api/portfolio`, { cache: "no-store" });
-  if (!res.ok) return null;
-  return res.json();
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/portfolio`, {
+      headers: { "X-API-Key": API_KEY },
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    return res.json();
+  } catch {
+    return null;
+  }
 }
 
 async function getTrades() {
-  const res = await fetch(`${BASE_URL}/api/trades`, { cache: "no-store" });
-  if (!res.ok) return [];
-  return res.json();
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/trades`, {
+      headers: { "X-API-Key": API_KEY },
+      cache: "no-store",
+    });
+    if (!res.ok) return [];
+    return res.json();
+  } catch {
+    return [];
+  }
 }
 
 export default async function DashboardPage() {
