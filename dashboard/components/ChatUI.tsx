@@ -2,6 +2,7 @@
 import { useState } from "react";
 
 interface Message {
+  id: number;
   role: "user" | "assistant";
   content: string;
 }
@@ -13,17 +14,18 @@ const SUGGESTED = [
   "내 포트폴리오 보여줘",
 ];
 
+let nextId = 1;
+
 export default function ChatUI() {
   const [messages, setMessages] = useState<Message[]>([
-    { role: "assistant", content: "안녕하세요! 포트폴리오나 매매에 대해 질문해보세요 🤖" },
+    { id: nextId++, role: "assistant", content: "안녕하세요! 포트폴리오나 매매에 대해 질문해보세요 🤖" },
   ]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
 
   async function send(text: string) {
     if (!text.trim() || loading) return;
-    const userMsg: Message = { role: "user", content: text };
-    setMessages((prev) => [...prev, userMsg]);
+    setMessages((prev) => [...prev, { id: nextId++, role: "user", content: text }]);
     setInput("");
     setLoading(true);
 
@@ -34,9 +36,15 @@ export default function ChatUI() {
         body: JSON.stringify({ message: text }),
       });
       const data = await res.json();
-      setMessages((prev) => [...prev, { role: "assistant", content: data.answer ?? "오류가 발생했습니다." }]);
+      const content = res.ok
+        ? (data.answer ?? "오류가 발생했습니다.")
+        : "오류가 발생했습니다.";
+      setMessages((prev) => [...prev, { id: nextId++, role: "assistant", content }]);
     } catch {
-      setMessages((prev) => [...prev, { role: "assistant", content: "서버 연결 오류입니다." }]);
+      setMessages((prev) => [
+        ...prev,
+        { id: nextId++, role: "assistant", content: "서버 연결 오류입니다." },
+      ]);
     } finally {
       setLoading(false);
     }
@@ -46,8 +54,8 @@ export default function ChatUI() {
     <div className="flex flex-col h-[calc(100vh-8rem)]">
       {/* 메시지 목록 */}
       <div className="flex-1 overflow-y-auto space-y-3 py-4">
-        {messages.map((m, i) => (
-          <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+        {messages.map((m) => (
+          <div key={m.id} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
             <div
               className={`max-w-[80%] rounded-2xl px-4 py-2 text-sm whitespace-pre-wrap ${
                 m.role === "user"
@@ -75,7 +83,8 @@ export default function ChatUI() {
             <button
               key={q}
               onClick={() => send(q)}
-              className="text-xs bg-gray-800 text-gray-300 rounded-full px-3 py-1.5 hover:bg-gray-700 transition"
+              disabled={loading}
+              className="text-xs bg-gray-800 text-gray-300 rounded-full px-3 py-1.5 hover:bg-gray-700 transition disabled:opacity-50"
             >
               {q}
             </button>
@@ -88,7 +97,9 @@ export default function ChatUI() {
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && send(input)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.nativeEvent.isComposing) send(input);
+          }}
           placeholder="질문을 입력하세요..."
           className="flex-1 bg-gray-800 rounded-full px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500"
         />
