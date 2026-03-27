@@ -19,10 +19,17 @@ async function getAllTrades() {
 export default async function HistoryPage() {
   const trades = await getAllTrades();
   return (
-    <div className="pt-6">
-      <h1 className="text-lg font-bold mb-4">매매 히스토리</h1>
-      <p className="text-gray-500 text-sm mb-4">총 {trades.length}건</p>
-      <div className="bg-gray-900 rounded-xl p-4">
+    <div className="pt-8">
+      <div className="flex items-end justify-between mb-5">
+        <div>
+          <p className="text-xs font-mono tracking-[0.2em] mb-0.5" style={{ color: "rgba(0,229,255,0.5)" }}>TRADE LOG</p>
+          <h1 className="text-xl font-bold tracking-tight text-white">History</h1>
+        </div>
+        <span className="text-xs font-mono px-2.5 py-1 rounded-lg" style={{ background: "rgba(0,229,255,0.08)", color: "rgba(0,229,255,0.6)", border: "1px solid rgba(0,229,255,0.15)" }}>
+          {trades.length} TRADES
+        </span>
+      </div>
+      <div className="rounded-xl overflow-hidden" style={{ border: "1px solid rgba(255,255,255,0.05)", background: "#0a0a0a" }}>
         <TradeTable trades={trades} />
       </div>
     </div>

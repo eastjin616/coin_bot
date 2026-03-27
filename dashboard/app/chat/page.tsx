@@ -2,8 +2,11 @@ import ChatUI from "@/components/ChatUI";
 
 export default function ChatPage() {
   return (
-    <div className="pt-6">
-      <h1 className="text-lg font-bold mb-4">AI 채팅</h1>
+    <div className="pt-8">
+      <div className="mb-4">
+        <p className="text-xs font-mono tracking-[0.2em] mb-0.5" style={{ color: "rgba(0,229,255,0.5)" }}>GROQ LLM</p>
+        <h1 className="text-xl font-bold tracking-tight text-white">AI Assistant</h1>
+      </div>
       <ChatUI />
     </div>
   );

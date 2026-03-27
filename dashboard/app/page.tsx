@@ -49,46 +49,76 @@ export default async function DashboardPage() {
   const [portfolio, trades] = await Promise.all([getPortfolio(), getTrades()]);
 
   return (
-    <div className="pt-6 space-y-6">
-      {/* 잔고 요약 */}
-      <div className="bg-gradient-to-br from-blue-600 to-blue-800 rounded-2xl p-5">
-        {portfolio ? (
-          <>
-            <p className="text-blue-200 text-sm">총 평가금액</p>
-            <p className="text-3xl font-bold mt-1">
-              {portfolio.total_value.toLocaleString()}원
-            </p>
-            <p className="text-blue-200 text-sm mt-2">
-              KRW 잔고: {portfolio.krw_balance.toLocaleString()}원
-            </p>
-          </>
-        ) : (
-          <>
-            <p className="text-blue-200 text-sm">총 평가금액</p>
-            <p className="text-xl font-bold mt-1 text-blue-300">데이터를 불러올 수 없습니다</p>
-          </>
-        )}
+    <div className="pt-8 space-y-6">
+      {/* 헤더 */}
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-xs font-mono tracking-[0.2em] text-[#00e5ff]/60 uppercase">AI Trading</p>
+          <h1 className="text-xl font-bold tracking-tight text-white">COIN_BOT</h1>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="w-1.5 h-1.5 rounded-full bg-[#00ff87] animate-pulse" />
+          <span className="text-xs text-[#00ff87] font-mono">LIVE</span>
+        </div>
+      </div>
+
+      {/* 총 자산 카드 */}
+      <div className="relative rounded-2xl p-5 overflow-hidden"
+        style={{ background: "linear-gradient(135deg, #0d1f2d 0%, #050f18 100%)", border: "1px solid rgba(0,229,255,0.15)" }}>
+        <div className="absolute inset-0 opacity-20"
+          style={{ background: "radial-gradient(circle at 80% 20%, rgba(0,229,255,0.3) 0%, transparent 60%)" }} />
+        <div className="relative">
+          <p className="text-xs font-mono tracking-widest text-[#00e5ff]/60 uppercase mb-2">Total Value</p>
+          {portfolio ? (
+            <>
+              <p className="text-4xl font-bold tracking-tight text-white glow-cyan">
+                {portfolio.total_value.toLocaleString()}
+                <span className="text-lg text-[#00e5ff]/70 ml-1">₩</span>
+              </p>
+              <div className="mt-3 pt-3 border-t border-white/5 flex justify-between">
+                <div>
+                  <p className="text-xs text-white/30 mb-0.5">KRW 잔고</p>
+                  <p className="text-sm font-mono text-white/70">{portfolio.krw_balance.toLocaleString()}원</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-xs text-white/30 mb-0.5">보유 코인</p>
+                  <p className="text-sm font-mono text-white/70">{portfolio.holdings.length}종</p>
+                </div>
+              </div>
+            </>
+          ) : (
+            <p className="text-lg text-white/30 mt-1">데이터 없음</p>
+          )}
+        </div>
       </div>
 
       {/* 보유 코인 */}
       <section>
-        <h2 className="text-gray-400 text-sm font-medium mb-3">보유 코인</h2>
+        <div className="flex items-center gap-2 mb-3">
+          <span className="text-xs font-mono tracking-widest text-white/30 uppercase">Holdings</span>
+          <div className="flex-1 h-px bg-white/5" />
+        </div>
         {(portfolio?.holdings?.length ?? 0) > 0 ? (
-          <div className="space-y-3">
+          <div className="space-y-2">
             {portfolio!.holdings.map((h) => (
               <CoinCard key={h.symbol} holding={h} />
             ))}
           </div>
         ) : (
-          <p className="text-gray-500 text-sm text-center py-6">보유 코인 없음</p>
+          <div className="rounded-xl border border-white/5 py-8 text-center">
+            <p className="text-sm text-white/20 font-mono">— NO POSITIONS —</p>
+          </div>
         )}
       </section>
 
       {/* 최근 매매 */}
       <section>
-        <h2 className="text-gray-400 text-sm font-medium mb-3">최근 매매</h2>
-        <div className="bg-gray-900 rounded-xl p-4">
-          <TradeTable trades={trades} limit={3} />
+        <div className="flex items-center gap-2 mb-3">
+          <span className="text-xs font-mono tracking-widest text-white/30 uppercase">Recent Trades</span>
+          <div className="flex-1 h-px bg-white/5" />
+        </div>
+        <div className="rounded-xl overflow-hidden" style={{ border: "1px solid rgba(255,255,255,0.05)", background: "#0a0a0a" }}>
+          <TradeTable trades={trades} limit={5} />
         </div>
       </section>
     </div>

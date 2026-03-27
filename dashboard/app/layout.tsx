@@ -1,20 +1,20 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { Space_Grotesk } from "next/font/google";
 import "./globals.css";
 import BottomNav from "@/components/BottomNav";
 
-const inter = Inter({ subsets: ["latin"] });
+const font = Space_Grotesk({ subsets: ["latin"], weight: ["400", "500", "600", "700"] });
 
 export const metadata: Metadata = {
-  title: "coin_bot 대시보드",
+  title: "COIN_BOT",
   description: "AI 암호화폐 자동매매 대시보드",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="ko">
-      <body className={`${inter.className} bg-gray-950 text-white min-h-screen`}>
-        <main className="max-w-lg mx-auto pb-20 px-4">{children}</main>
+      <body className={`${font.className} min-h-screen`} style={{ background: "#080808", color: "#e0e0e0" }}>
+        <main className="max-w-lg mx-auto pb-24 px-4">{children}</main>
         <BottomNav />
       </body>
     </html>
