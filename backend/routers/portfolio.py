@@ -25,6 +25,7 @@ def get_portfolio():
         logger.error(f"업비트 잔고 조회 실패: {e}")
         balances = []
 
+    balances = [b for b in balances if isinstance(b, dict)]
     coin_symbols = [
         f"KRW-{b['currency']}"
         for b in balances
