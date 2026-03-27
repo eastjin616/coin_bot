@@ -15,6 +15,7 @@ export default function TradeTable({ trades, limit }: { trades: Trade[]; limit?:
       <table className="w-full text-sm">
         <thead>
           <tr className="text-gray-500 border-b border-gray-800">
+            <th className="text-left py-2 w-8">#</th>
             <th className="text-left py-2">코인</th>
             <th className="text-left py-2">구분</th>
             <th className="text-right py-2">가격</th>
@@ -24,6 +25,7 @@ export default function TradeTable({ trades, limit }: { trades: Trade[]; limit?:
         <tbody>
           {rows.map((t) => (
             <tr key={t.id} className="border-b border-gray-800/50">
+              <td className="py-2 text-gray-600 text-xs">{t.id}</td>
               <td className="py-2">{t.symbol.replace("KRW-", "")}</td>
               <td className={`py-2 font-medium ${t.action === "BUY" ? "text-green-400" : "text-red-400"}`}>
                 {t.action}
