@@ -1,5 +1,4 @@
 # tests/test_api_key_auth.py
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 

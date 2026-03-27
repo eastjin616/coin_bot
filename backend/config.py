@@ -55,7 +55,7 @@ class Settings(BaseSettings):
 
     # 대시보드 인증 & CORS
     dashboard_api_key: str = ""
-    vercel_origin: str = "https://localhost:3000"
+    vercel_origin: str = "http://localhost:3000"
 
     @property
     def allowed_chat_ids(self) -> List[int]:
