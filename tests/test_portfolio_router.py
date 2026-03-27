@@ -9,7 +9,7 @@ def client():
         from backend.config import get_settings
         get_settings.cache_clear()
         from backend.main import app
-        return TestClient(app)
+        yield TestClient(app)
 
 
 def test_portfolio_returns_structure(client):
