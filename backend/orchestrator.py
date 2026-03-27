@@ -156,7 +156,8 @@ class Orchestrator:
 
             # 4. 필터 통과 → 차트 생성 → GPT 호출
             chart_path = generate_chart(market, symbol)
-            buy_prob = self.vision.predict(chart_path, indicators=indicators)
+            loop = asyncio.get_event_loop()
+            buy_prob = await loop.run_in_executor(None, lambda: self.vision.predict(chart_path, indicators=indicators))
             self._last_analyzed[symbol] = datetime.now()  # skip 타이머 리셋
 
             provider = "OpenAI" if self.settings.openai_api_key else ("Gemini" if self.settings.gemini_api_key else "랜덤")
