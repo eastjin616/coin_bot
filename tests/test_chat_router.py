@@ -23,3 +23,9 @@ def test_chat_returns_answer(client):
 def test_chat_empty_message_returns_422(client):
     resp = client.post("/chat", json={"message": ""})
     assert resp.status_code == 422
+
+def test_chat_agent_error_returns_500(client):
+    with patch("backend.routers.chat.ask_agent") as mock_agent:
+        mock_agent.side_effect = RuntimeError("Groq API timeout")
+        resp = client.post("/chat", json={"message": "BTC 어때?"})
+    assert resp.status_code == 500

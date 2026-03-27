@@ -1,7 +1,10 @@
 # backend/routers/chat.py
-from fastapi import APIRouter
+import logging
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, field_validator
 from backend.ai.chat_agent import ask_agent
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -17,5 +20,9 @@ class ChatRequest(BaseModel):
 
 @router.post("/chat")
 def chat(req: ChatRequest):
-    answer = ask_agent(req.message)
+    try:
+        answer = ask_agent(req.message)
+    except Exception as e:
+        logger.error(f"Agent 실행 오류: {e}")
+        raise HTTPException(status_code=500, detail="AI 에이전트 오류가 발생했습니다.")
     return {"answer": answer}

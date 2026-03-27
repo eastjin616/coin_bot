@@ -34,9 +34,5 @@ def ask_agent(message: str) -> str:
     agent = create_tool_calling_agent(llm, tools, prompt)
     executor = AgentExecutor(agent=agent, tools=tools, verbose=False, max_iterations=3)
 
-    try:
-        result = executor.invoke({"input": message})
-        return result.get("output", "답변을 생성하지 못했습니다.")
-    except Exception as e:
-        logger.error(f"Agent 실행 오류: {e}")
-        return f"오류가 발생했습니다: {str(e)}"
+    result = executor.invoke({"input": message})
+    return result.get("output", "답변을 생성하지 못했습니다.")
