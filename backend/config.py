@@ -33,8 +33,8 @@ class Settings(BaseSettings):
     groq_api_key: str = ""
 
     # 기술적 지표 전략 파라미터 (RSI + MA 크로스)
-    rsi_buy_threshold: float = 40.0   # RSI 이하 → 매수 고려
-    rsi_sell_threshold: float = 60.0  # RSI 이상 → 매도 고려
+    rsi_buy_threshold: float = 45.0   # RSI 이하 → 매수 고려 (백테스팅 최적값)
+    rsi_sell_threshold: float = 55.0  # RSI 이상 → 매도 고려 (백테스팅 최적값)
 
     # 기능 플래그
     enable_volatility_filter: bool = True
