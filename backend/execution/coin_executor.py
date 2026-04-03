@@ -91,6 +91,15 @@ class CoinExecutor:
             logger.warning(f"보유 수량 없음: {symbol}")
             return None
 
+        # 업비트 최소 주문금액 5,000원 체크
+        import pyupbit as _pyupbit
+        current_price = _pyupbit.get_current_price(symbol) or 0
+        estimated_value = coin_balance * current_price
+        if estimated_value < 5000:
+            logger.warning(f"매도 금액 부족: {symbol} 평가 {estimated_value:,.0f}원 (최소 5,000원) → 포지션 DB 정리")
+            self._remove_position(symbol)
+            return None
+
         if not self.upbit:
             logger.info(f"[모의] {symbol} 매도 {coin_balance:.6f}")
             return {"symbol": symbol, "action": "SELL", "price": 0, "quantity": coin_balance}
@@ -108,6 +117,8 @@ class CoinExecutor:
                 self._remove_position(symbol)
                 logger.info(f"매도 완료: {symbol} {quantity:.6f} @ {price:.0f}원")
                 return {"symbol": symbol, "action": "SELL", "price": price, "quantity": quantity}
+            else:
+                logger.error(f"매도 응답 오류: {symbol} → {result}")
         except Exception as e:
             logger.error(f"매도 실패: {e}")
         return None
