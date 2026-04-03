@@ -6,7 +6,7 @@ from backend.config import get_settings
 from backend.database import get_db_conn
 from backend.ai.chart_generator import get_coin_indicators
 from backend.execution.coin_executor import CoinExecutor
-from backend.telegram_bot import send_trade_alert
+from backend.telegram_bot import send_trade_alert, send_disk_alert, send_weekly_report
 
 logger = logging.getLogger(__name__)
 
@@ -145,8 +145,14 @@ class Orchestrator:
             await self.analyze_and_trade("coin", item["symbol"], item["name"] or item["symbol"])
 
     def start(self):
+        import pytz
+        kst = pytz.timezone("Asia/Seoul")
         interval = self.settings.poll_interval_seconds
         self.scheduler.add_job(self.run_coin_cycle, "interval", seconds=interval, id="coin_cycle")
+        # 매시간 디스크 체크
+        self.scheduler.add_job(send_disk_alert, "interval", hours=1, id="disk_check")
+        # 매주 월요일 오전 9시 KST 주간 리포트
+        self.scheduler.add_job(send_weekly_report, "cron", day_of_week="mon", hour=9, minute=0, timezone=kst, id="weekly_report")
         self.scheduler.start()
         logger.info(f"✅ 오케스트레이터 시작 (폴링 주기: {interval}초)")
 
