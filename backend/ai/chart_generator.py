@@ -63,8 +63,8 @@ def _calc_indicators(df: pd.DataFrame) -> dict:
 
 
 def get_coin_indicators(symbol: str) -> dict:
-    """코인 기술적 지표 반환 (15분봉 120개 = 최근 30시간)"""
-    df = pyupbit.get_ohlcv(symbol, interval="minute15", count=120)
+    """코인 기술적 지표 반환 (일봉 200개 = 약 7개월)"""
+    df = pyupbit.get_ohlcv(symbol, interval="day", count=200)
     if df is None or df.empty:
         return {}
     return _calc_indicators(df)

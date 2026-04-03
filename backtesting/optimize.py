@@ -3,14 +3,15 @@ from backtesting.data_fetcher import fetch_ohlcv
 from backtesting.simulator import run_backtest
 
 SYMBOLS = ["KRW-BTC", "KRW-ETH", "KRW-SOL", "KRW-XRP", "KRW-DOGE"]
-RSI_BUY_RANGE = [30, 35, 40, 45]
+RSI_BUY_RANGE = [35, 40, 45, 50]
 RSI_SELL_RANGE = [55, 60, 65, 70]
-DATA_DAYS = 200
+DATA_DAYS = 3000  # 일봉 최대치 (~8년)
+INTERVAL = "day"
 
 
 def optimize(symbol: str) -> list[dict]:
     print(f"\n📊 {symbol} 데이터 로딩 중...")
-    df = fetch_ohlcv(symbol, count=DATA_DAYS)
+    df = fetch_ohlcv(symbol, interval=INTERVAL, count=DATA_DAYS)
     if df.empty:
         print(f"  데이터 없음: {symbol}")
         return []
@@ -35,7 +36,7 @@ def optimize(symbol: str) -> list[dict]:
 
 def print_report(all_results: list[dict]):
     print("\n" + "=" * 72)
-    print("📈 백테스팅 결과 리포트 (최근 200일, 15분봉)")
+    print("📈 백테스팅 결과 리포트 (일봉 ~8년치)")
     print("=" * 72)
 
     best_by_symbol: dict[str, dict] = {}

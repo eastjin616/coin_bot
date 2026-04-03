@@ -20,7 +20,8 @@ def fetch_ohlcv(symbol: str, interval: str = "minute15", count: int = 200) -> pd
         if (time.time() - mtime) < 3600:
             return pd.read_csv(cache_file, index_col=0, parse_dates=True)
 
-    candles_needed = count * 96 if interval == "minute15" else count * 24
+    candles_per_day = {"minute15": 96, "minute60": 24, "day": 1}.get(interval, 96)
+    candles_needed = count * candles_per_day
     all_frames = []
     to = None
     max_retries = 3

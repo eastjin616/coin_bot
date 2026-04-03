@@ -58,21 +58,16 @@ class Orchestrator:
         self.scheduler = AsyncIOScheduler()
 
     def _get_signal(self, indicators: dict) -> str:
-        """RSI + MA 크로스 기반 매매 신호 반환.
-        매수: RSI < 30 AND MA5 > MA20
-        매도: RSI > 70 OR MA5 < MA20
+        """일봉 RSI 기반 매매 신호 반환.
+        매수: RSI < rsi_buy_threshold (과매도)
+        매도: RSI > rsi_sell_threshold (과매수)
         그 외: HOLD
         """
         rsi = indicators.get("rsi", 50)
-        ma5 = indicators.get("ma5", 0)
-        ma20 = indicators.get("ma20", 0)
 
-        golden_cross = ma5 > ma20
-        death_cross = ma5 < ma20
-
-        if rsi < self.settings.rsi_buy_threshold and golden_cross:
+        if rsi < self.settings.rsi_buy_threshold:
             return "BUY"
-        if rsi > self.settings.rsi_sell_threshold or death_cross:
+        if rsi > self.settings.rsi_sell_threshold:
             return "SELL"
         return "HOLD"
 

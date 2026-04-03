@@ -55,8 +55,8 @@ def run_backtest(
                 update_mdd(cash, position, price)
                 continue
 
-        # 매수
-        if position == 0 and rsi < rsi_buy and golden and cash >= order_amount:
+        # 매수 (일봉 전략: MA 조건 제거, RSI만 사용)
+        if position == 0 and rsi < rsi_buy and cash >= order_amount:
             qty = order_amount / price
             cash -= order_amount
             position += qty
