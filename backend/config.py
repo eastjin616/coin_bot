@@ -32,13 +32,12 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     groq_api_key: str = ""
 
-    # 신호 임계값
-    signal_buy_threshold: float = 80.0
-    signal_sell_threshold: float = 20.0
+    # 기술적 지표 전략 파라미터 (RSI + MA 크로스)
+    rsi_buy_threshold: float = 30.0   # RSI 이하 → 매수 고려
+    rsi_sell_threshold: float = 70.0  # RSI 이상 → 매도 고려
 
-    # 기능 플래그 (false로 설정하면 해당 기능 비활성화)
+    # 기능 플래그
     enable_volatility_filter: bool = True
-    enable_dynamic_threshold: bool = True
 
     # 운영 설정
     cooldown_minutes: int = 5
@@ -53,7 +52,7 @@ class Settings(BaseSettings):
     stop_loss_percent: float = 5.0
     take_profit_percent: float = 10.0
 
-    # 대시보드 인증 & CORS
+    # (미사용) 대시보드 인증 & CORS
     dashboard_api_key: str = ""
     vercel_origin: str = "http://localhost:3000"
 

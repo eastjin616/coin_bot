@@ -1,12 +1,10 @@
-import asyncio
 import logging
 import pytz
 from datetime import datetime
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from backend.config import get_settings
 from backend.database import get_db_conn
-from backend.ai.llm_engine import LLMEngine
-from backend.ai.chart_generator import generate_chart, get_coin_indicators
+from backend.ai.chart_generator import get_coin_indicators
 from backend.execution.coin_executor import CoinExecutor
 from backend.telegram_bot import send_trade_alert
 
@@ -56,54 +54,27 @@ def get_watchlist(market: str) -> list:
 class Orchestrator:
     def __init__(self):
         self.settings = get_settings()
-        self.vision = LLMEngine(
-            gemini_api_key=self.settings.gemini_api_key,
-            anthropic_api_key=self.settings.anthropic_api_key,
-            openai_api_key=self.settings.openai_api_key,
-            groq_api_key=self.settings.groq_api_key,
-        )
         self.coin_executor = CoinExecutor()
         self.scheduler = AsyncIOScheduler()
-        # 변동성 필터: 코인별 마지막 GPT 분석 시각 (in-memory)
-        self._last_analyzed: dict[str, datetime] = {}
-        self._max_skip_minutes: int = 30
 
-    def _should_skip_analysis(self, symbol: str, indicators: dict) -> bool:
-        """변동성 낮으면 True 반환 → GPT 호출 skip.
-        지표 없거나 30분 이상 연속 skip이면 False → 강제 분석.
+    def _get_signal(self, indicators: dict) -> str:
+        """RSI + MA 크로스 기반 매매 신호 반환.
+        매수: RSI < 30 AND MA5 > MA20
+        매도: RSI > 70 OR MA5 < MA20
+        그 외: HOLD
         """
-        if not indicators:
-            return False
-
-        last = self._last_analyzed.get(symbol)
-        if not last or (datetime.now() - last).total_seconds() > self._max_skip_minutes * 60:
-            return False
-
         rsi = indicators.get("rsi", 50)
-        volume_trend = indicators.get("volume_trend", "보합")
         ma5 = indicators.get("ma5", 0)
-        ma20 = indicators.get("ma20", 1)
-        ma_diff_pct = abs(ma5 - ma20) / ma20 * 100 if ma20 else 0
+        ma20 = indicators.get("ma20", 0)
 
-        tight_coins = ["KRW-BTC", "KRW-ETH"]
-        rsi_lo, rsi_hi = (48, 52) if symbol in tight_coins else (45, 55)
+        golden_cross = ma5 > ma20
+        death_cross = ma5 < ma20
 
-        return (rsi_lo <= rsi <= rsi_hi) and (volume_trend == "보합") and (ma_diff_pct < 0.5)
-
-    def _get_dynamic_thresholds(self, indicators: dict) -> tuple[float, float]:
-        """RSI 기반 동적 buy_threshold 반환. sell_threshold는 항상 고정.
-        RSI < 30 (과매도) → 65%, RSI > 70 (과매수) → 85%, 중립 → config 기본값.
-        """
-        rsi = indicators.get("rsi", 50)
-
-        if rsi < 30:
-            buy_threshold = 65.0
-        elif rsi > 70:
-            buy_threshold = 85.0
-        else:
-            buy_threshold = self.settings.signal_buy_threshold
-
-        return buy_threshold, self.settings.signal_sell_threshold
+        if rsi < self.settings.rsi_buy_threshold and golden_cross:
+            return "BUY"
+        if rsi > self.settings.rsi_sell_threshold or death_cross:
+            return "SELL"
+        return "HOLD"
 
     def _check_profit_stop(self, symbol: str) -> str | None:
         """익절/손절 조건 체크. 해당되면 'SELL' 반환, 아니면 None"""
@@ -133,7 +104,7 @@ class Orchestrator:
 
     async def analyze_and_trade(self, market: str, symbol: str, name: str):
         try:
-            # 1. 익절/손절 먼저 체크 (변경 없음)
+            # 1. 익절/손절 먼저 체크
             if market == "coin":
                 forced_action = self._check_profit_stop(symbol)
                 if forced_action:
@@ -144,58 +115,33 @@ class Orchestrator:
                                                confidence=100.0, price=result.get("price", 0), quantity=result.get("quantity", 0))
                     return
 
-            # 2. 지표 먼저 조회 (chart 생성 전에 필터 판단)
+            # 2. 기술적 지표 조회
             indicators = get_coin_indicators(symbol) if market == "coin" else {}
+            rsi = indicators.get("rsi", 50)
+            ma5 = indicators.get("ma5", 0)
+            ma20 = indicators.get("ma20", 0)
 
-            # 3. 변동성 필터: 코인만 적용, 낮으면 GPT + 차트 생성 전부 skip
-            if self.settings.enable_volatility_filter and market == "coin" and self._should_skip_analysis(symbol, indicators):
-                rsi_val = indicators.get('rsi', 'N/A')
-                rsi_str = f"{rsi_val:.1f}" if isinstance(rsi_val, (int, float)) else str(rsi_val)
-                logger.info(f"SKIP [{symbol}]: RSI={rsi_str} vol={indicators.get('volume_trend')} → GPT 호출 생략")
-                return
+            # 3. RSI + MA 크로스 신호 판단
+            action = self._get_signal(indicators)
+            logger.info(f"TA 신호 [{symbol}]: {action} | RSI={rsi:.1f} MA5={ma5:.0f} MA20={ma20:.0f}")
 
-            # 4. 필터 통과 → 차트 생성 → GPT 호출
-            chart_path = generate_chart(market, symbol)
-            loop = asyncio.get_event_loop()
-            buy_prob = await loop.run_in_executor(None, lambda: self.vision.predict(chart_path, indicators=indicators))
-            self._last_analyzed[symbol] = datetime.now()  # skip 타이머 리셋
-
-            provider = "OpenAI" if self.settings.openai_api_key else ("Gemini" if self.settings.gemini_api_key else "랜덤")
-            logger.info(f"AI 신호 [{symbol}]: {buy_prob:.1f}% ({provider}) RSI={indicators.get('rsi', 'N/A')}")
-
-            # 5. 동적 임계값 적용
-            if self.settings.enable_dynamic_threshold and market == "coin":
-                buy_threshold, sell_threshold = self._get_dynamic_thresholds(indicators)
-                rsi_val = indicators.get('rsi', 'N/A')
-                rsi_str = f"{rsi_val:.1f}" if isinstance(rsi_val, (int, float)) else str(rsi_val)
-                logger.info(f"동적 임계값 [{symbol}]: RSI={rsi_str} → buy={buy_threshold}% sell={sell_threshold}%")
-            else:
-                buy_threshold = self.settings.signal_buy_threshold
-                sell_threshold = self.settings.signal_sell_threshold
-
-            # 6. 매매 결정
-            if buy_prob >= buy_threshold:
-                action = "BUY"
-            elif buy_prob < sell_threshold:
-                action = "SELL"
-            else:
-                logger.debug(f"HOLD: {symbol} ({buy_prob:.1f}%)")
+            if action == "HOLD":
                 return
 
             if is_on_cooldown(symbol, action, self.settings.cooldown_minutes):
                 logger.debug(f"쿨다운 중: {symbol} {action}")
                 return
 
-            # 7. 실행
-            result = self.coin_executor.buy(symbol, buy_prob) if action == "BUY" else self.coin_executor.sell(symbol, buy_prob)
+            # 4. 실행
+            result = self.coin_executor.buy(symbol, 100.0) if action == "BUY" else self.coin_executor.sell(symbol, 100.0)
 
             if result:
                 update_cooldown(symbol, action)
                 await send_trade_alert(
                     market=market, symbol=name or symbol, action=action,
-                    confidence=buy_prob, price=result.get("price", 0), quantity=result.get("quantity", 0)
+                    confidence=100.0, price=result.get("price", 0), quantity=result.get("quantity", 0)
                 )
-                logger.info(f"✅ {action} 완료: {symbol} ({buy_prob:.1f}%)")
+                logger.info(f"✅ {action} 완료: {symbol}")
         except Exception as e:
             logger.error(f"분석/매매 오류 [{symbol}]: {e}")
 
