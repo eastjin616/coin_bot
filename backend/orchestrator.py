@@ -124,6 +124,20 @@ class Orchestrator:
             if action == "HOLD":
                 return
 
+            # BUY: 이미 포지션 있으면 스킵
+            if action == "BUY" and market == "coin":
+                try:
+                    conn = get_db_conn()
+                    cur = conn.cursor()
+                    cur.execute("SELECT 1 FROM positions WHERE market = 'coin' AND symbol = %s", (symbol,))
+                    has_position = cur.fetchone() is not None
+                    conn.close()
+                    if has_position:
+                        logger.debug(f"포지션 보유 중 — 추가매수 스킵: {symbol}")
+                        return
+                except Exception as e:
+                    logger.error(f"포지션 조회 실패: {e}")
+
             if is_on_cooldown(symbol, action, self.settings.cooldown_minutes):
                 logger.debug(f"쿨다운 중: {symbol} {action}")
                 return
@@ -136,7 +150,7 @@ class Orchestrator:
                 await send_trade_alert(
                     market=market, symbol=name or symbol, action=action,
                     confidence=100.0, price=result.get("price", 0), quantity=result.get("quantity", 0),
-                    entry_price=result.get("entry_price", 0)
+                    entry_price=result.get("entry_price", 0), rsi=rsi
                 )
                 logger.info(f"✅ {action} 완료: {symbol}")
         except Exception as e:

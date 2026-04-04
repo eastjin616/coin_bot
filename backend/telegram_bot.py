@@ -6,7 +6,7 @@ from backend.database import get_db_conn
 
 logger = logging.getLogger(__name__)
 
-async def send_trade_alert(market: str, symbol: str, action: str, confidence: float, price: float, quantity: float, entry_price: float = 0):
+async def send_trade_alert(market: str, symbol: str, action: str, confidence: float, price: float, quantity: float, entry_price: float = 0, rsi: float = 0):
     settings = get_settings()
     if not settings.telegram_bot_token:
         logger.warning("텔레그램 봇 토큰 없음 — 알림 건너뜀")
@@ -27,6 +27,9 @@ async def send_trade_alert(market: str, symbol: str, action: str, confidence: fl
         f"수량: {quantity:.6f}",
         f"금액: {price * quantity:,.0f}원",
     ]
+
+    if rsi > 0:
+        lines.append(f"RSI: {rsi:.1f}")
 
     if action == "SELL" and entry_price > 0 and price > 0:
         pnl_pct = (price - entry_price) / entry_price * 100
