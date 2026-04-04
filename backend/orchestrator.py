@@ -56,9 +56,17 @@ class Orchestrator:
         self._error_counts: dict[str, int] = {}  # 연속 오류 카운터
         self._last_balance_alert_at: datetime | None = None  # 잔고 부족 알림 마지막 전송 시각
 
-    # 백테스팅 기반 코인별 RSI 임계값 오버라이드
+    # 백테스팅 기반 코인별 RSI 임계값 오버라이드 (일봉 ~8년치 그리드서치)
     _RSI_OVERRIDES: dict[str, tuple[float, float]] = {
-        "KRW-BTC": (50, 65),  # BTC: 50/65 최적 (+2.6%)
+        "KRW-BTC":  (50, 65),  # +2.6%
+        "KRW-LINK": (50, 70),  # +30.5%
+        "KRW-HBAR": (45, 70),  # +13.2%
+        "KRW-BCH":  (40, 60),  # +17.0%
+        "KRW-ATOM": (45, 60),  # +10.3%
+        "KRW-AVAX": (45, 70),  # +4.5%
+        "KRW-SUI":  (50, 70),  # +7.3%
+        "KRW-UNI":  (50, 65),  # +5.3%
+        "KRW-SHIB": (50, 60),  # +6.0%
     }
 
     def _get_signal(self, symbol: str, indicators: dict) -> str:

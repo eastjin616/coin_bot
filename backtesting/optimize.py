@@ -2,7 +2,12 @@ import itertools
 from backtesting.data_fetcher import fetch_ohlcv
 from backtesting.simulator import run_backtest
 
-SYMBOLS = ["KRW-BTC", "KRW-ETH", "KRW-SOL", "KRW-XRP", "KRW-DOGE"]
+SYMBOLS = [
+    "KRW-BTC", "KRW-ETH", "KRW-SOL", "KRW-XRP", "KRW-DOGE",
+    "KRW-DOT", "KRW-ADA", "KRW-AVAX", "KRW-LINK", "KRW-TRX",
+    "KRW-SUI", "KRW-NEAR", "KRW-HBAR", "KRW-ICP", "KRW-OP",
+    "KRW-ATOM", "KRW-UNI", "KRW-SHIB", "KRW-LTC", "KRW-BCH",
+]
 RSI_BUY_RANGE = [35, 40, 45, 50]
 RSI_SELL_RANGE = [55, 60, 65, 70]
 DATA_DAYS = 3000  # 일봉 최대치 (~8년)
