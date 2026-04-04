@@ -1,6 +1,6 @@
 # coin_bot 구현 현황
 
-## 2026-04-05: 버그 수정 + 전략 고도화 (6건)
+## 2026-04-05: 버그 수정 + 전략 고도화 (8건)
 
 ### 1. 익절/손절 오류 수정 (`orchestrator.py`)
 - `_check_profit_stop()`에서 `get_db_conn()` 미import로 매 사이클마다 오류 발생
@@ -34,6 +34,17 @@
   - HBAR: +20%/-5%  → +17.9%
   - ATOM: +15%/-5%  → +11.5%
   - BTC:  +5%/-3%   → 빠른 회전 전략
+
+### 7. MA Cross 진입 조건 추가 (`orchestrator.py`)
+- BUY 신호 발생 시 MA5 > MA20 (단기 이평 > 장기 이평) 추가 확인
+- MA Cross 미충족 시 HOLD → 하락추세 구간 매수 차단
+- MA 데이터 없는 경우 RSI만으로 판단 (fallback)
+- 예: DOT RSI 10.0 과매도지만 MA5 < MA20 하락추세 → 매수 차단
+
+### 8. 포지션 없을 때 SELL 신호 무시 (`orchestrator.py`)
+- `_has_position()` 추가: DB 포지션 여부 확인
+- SELL 신호 발생 시 포지션 없으면 HOLD 처리
+- TRX처럼 보유 없이 매도 시도하던 노이즈 완전 제거
 
 ---
 
