@@ -58,17 +58,26 @@ class Orchestrator:
         self.scheduler = AsyncIOScheduler()
         self._error_counts: dict[str, int] = {}  # 연속 오류 카운터
 
-    def _get_signal(self, indicators: dict) -> str:
+    # 백테스팅 기반 코인별 RSI 임계값 오버라이드
+    _RSI_OVERRIDES: dict[str, tuple[float, float]] = {
+        "KRW-BTC": (50, 65),  # BTC: 50/65 최적 (+2.6%)
+    }
+
+    def _get_signal(self, symbol: str, indicators: dict) -> str:
         """일봉 RSI 기반 매매 신호 반환.
         매수: RSI < rsi_buy_threshold (과매도)
         매도: RSI > rsi_sell_threshold (과매수)
         그 외: HOLD
         """
         rsi = indicators.get("rsi", 50)
+        buy_th, sell_th = self._RSI_OVERRIDES.get(
+            symbol,
+            (self.settings.rsi_buy_threshold, self.settings.rsi_sell_threshold)
+        )
 
-        if rsi < self.settings.rsi_buy_threshold:
+        if rsi < buy_th:
             return "BUY"
-        if rsi > self.settings.rsi_sell_threshold:
+        if rsi > sell_th:
             return "SELL"
         return "HOLD"
 
@@ -119,7 +128,7 @@ class Orchestrator:
             ma20 = indicators.get("ma20", 0)
 
             # 3. RSI + MA 크로스 신호 판단
-            action = self._get_signal(indicators)
+            action = self._get_signal(symbol, indicators)
             logger.info(f"TA 신호 [{symbol}]: {action} | RSI={rsi:.1f} MA5={ma5:.0f} MA20={ma20:.0f}")
 
             if action == "HOLD":
