@@ -78,7 +78,6 @@ async def send_disk_alert():
 async def send_weekly_report():
     """주간 수익률 리포트 텔레그램 전송"""
     try:
-        import pyupbit
         from backend.execution.coin_executor import CoinExecutor
 
         conn = get_db_conn()
@@ -125,10 +124,57 @@ async def send_weekly_report():
         logger.error(f"주간 리포트 실패: {e}")
 
 
+async def send_daily_position_report():
+    """매일 오전 9시 KST 포지션 현황 + 미실현 손익 전송"""
+    try:
+        import pyupbit
+        from backend.execution.coin_executor import CoinExecutor
+
+        conn = get_db_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT symbol, entry_price, quantity FROM positions WHERE market = 'coin'")
+        rows = cur.fetchall()
+        conn.close()
+
+        executor = CoinExecutor()
+        krw = executor.get_balance_krw()
+
+        lines = ["📋 일일 포지션 현황\n"]
+
+        if rows:
+            total_invested = 0.0
+            total_current = 0.0
+            for row in rows:
+                symbol = row["symbol"]
+                entry = float(row["entry_price"])
+                qty = float(row["quantity"])
+                current = pyupbit.get_current_price(symbol) or entry
+                pnl_pct = (current - entry) / entry * 100
+                pnl_krw = (current - entry) * qty
+                pnl_icon = "📈" if pnl_pct >= 0 else "📉"
+                invested = entry * qty
+                total_invested += invested
+                total_current += current * qty
+                lines.append(
+                    f"{pnl_icon} {symbol.split('-')[1]}: {pnl_pct:+.1f}% ({pnl_krw:+,.0f}원)"
+                )
+            total_pnl = total_current - total_invested
+            total_pnl_pct = (total_current - total_invested) / total_invested * 100 if total_invested > 0 else 0
+            lines.append(f"\n합산 미실현 손익: {total_pnl:+,.0f}원 ({total_pnl_pct:+.1f}%)")
+        else:
+            lines.append("📭 보유 중인 코인 없음")
+
+        lines.append(f"\n💰 KRW 잔고: {krw:,.0f}원")
+        await send_message("\n".join(lines))
+    except Exception as e:
+        logger.error(f"일일 포지션 리포트 실패: {e}")
+
+
 async def _start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "안녕하세요! AI 자동매매 봇입니다. 🤖\n\n"
-        "/balance - 현재 보유 포지션 조회"
+        "/balance - 현재 보유 포지션 조회\n"
+        "/status - 실시간 RSI + 미실현 손익"
     )
 
 async def _balance_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -163,9 +209,70 @@ async def _balance_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"잔고 조회 실패: {e}")
         await update.message.reply_text("❌ 잔고 조회 중 오류가 발생했습니다.")
 
+async def _status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    settings = get_settings()
+    chat_id = update.effective_chat.id
+    if chat_id not in settings.allowed_chat_ids:
+        await update.message.reply_text("⛔ 접근 권한이 없습니다.")
+        return
+
+    await update.message.reply_text("⏳ 조회 중...")
+
+    try:
+        import pyupbit
+        from backend.ai.chart_generator import get_coin_indicators
+        from backend.execution.coin_executor import CoinExecutor
+
+        conn = get_db_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT symbol, entry_price, quantity FROM positions WHERE market = 'coin'")
+        rows = cur.fetchall()
+        conn.close()
+
+        executor = CoinExecutor()
+        krw = executor.get_balance_krw()
+
+        lines = ["📊 실시간 현황\n"]
+
+        if rows:
+            total_invested = 0.0
+            total_current = 0.0
+            for row in rows:
+                symbol = row["symbol"]
+                entry = float(row["entry_price"])
+                qty = float(row["quantity"])
+                try:
+                    indicators = get_coin_indicators(symbol)
+                    rsi = indicators.get("rsi", 0)
+                    current = pyupbit.get_current_price(symbol) or entry
+                except Exception:
+                    rsi = 0
+                    current = entry
+                pnl_pct = (current - entry) / entry * 100
+                pnl_krw = (current - entry) * qty
+                pnl_icon = "📈" if pnl_pct >= 0 else "📉"
+                total_invested += entry * qty
+                total_current += current * qty
+                rsi_str = f" | RSI {rsi:.1f}" if rsi > 0 else ""
+                lines.append(
+                    f"{pnl_icon} {symbol.split('-')[1]}: {pnl_pct:+.1f}% ({pnl_krw:+,.0f}원){rsi_str}"
+                )
+            total_pnl = total_current - total_invested
+            total_pnl_pct = (total_current - total_invested) / total_invested * 100 if total_invested > 0 else 0
+            lines.append(f"\n합산: {total_pnl:+,.0f}원 ({total_pnl_pct:+.1f}%)")
+        else:
+            lines.append("📭 보유 중인 코인 없음")
+
+        lines.append(f"\n💰 KRW 잔고: {krw:,.0f}원")
+        await update.message.reply_text("\n".join(lines))
+    except Exception as e:
+        logger.error(f"status 조회 실패: {e}")
+        await update.message.reply_text("❌ 조회 중 오류가 발생했습니다.")
+
 def setup_bot() -> Application:
     settings = get_settings()
     app = Application.builder().token(settings.telegram_bot_token).build()
     app.add_handler(CommandHandler("start", _start_handler))
     app.add_handler(CommandHandler("balance", _balance_handler))
+    app.add_handler(CommandHandler("status", _status_handler))
     return app

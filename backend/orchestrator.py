@@ -6,7 +6,7 @@ from backend.config import get_settings
 from backend.database import get_db_conn
 from backend.ai.chart_generator import get_coin_indicators
 from backend.execution.coin_executor import CoinExecutor
-from backend.telegram_bot import send_trade_alert, send_disk_alert, send_weekly_report
+from backend.telegram_bot import send_trade_alert, send_disk_alert, send_weekly_report, send_daily_position_report, send_message
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +56,7 @@ class Orchestrator:
         self.settings = get_settings()
         self.coin_executor = CoinExecutor()
         self.scheduler = AsyncIOScheduler()
+        self._error_counts: dict[str, int] = {}  # 연속 오류 카운터
 
     def _get_signal(self, indicators: dict) -> str:
         """일봉 RSI 기반 매매 신호 반환.
@@ -141,6 +142,16 @@ class Orchestrator:
                 logger.info(f"✅ {action} 완료: {symbol}")
         except Exception as e:
             logger.error(f"분석/매매 오류 [{symbol}]: {e}")
+            err_key = f"{symbol}:{type(e).__name__}"
+            self._error_counts[err_key] = self._error_counts.get(err_key, 0) + 1
+            if self._error_counts[err_key] == 3:
+                await send_message(f"🚨 연속 오류 경고\n\n{symbol} 에서 동일 오류 3회 반복\n{type(e).__name__}: {e}")
+        else:
+            # 성공 시 해당 심볼 오류 카운터 초기화
+            err_key_prefix = f"{symbol}:"
+            for k in list(self._error_counts.keys()):
+                if k.startswith(err_key_prefix):
+                    del self._error_counts[k]
 
     async def run_coin_cycle(self):
         for item in get_watchlist("coin"):
@@ -155,6 +166,8 @@ class Orchestrator:
         self.scheduler.add_job(send_disk_alert, "interval", hours=1, id="disk_check")
         # 매주 월요일 오전 9시 KST 주간 리포트
         self.scheduler.add_job(send_weekly_report, "cron", day_of_week="mon", hour=9, minute=0, timezone=kst, id="weekly_report")
+        # 매일 오전 9시 KST 일일 포지션 현황
+        self.scheduler.add_job(send_daily_position_report, "cron", hour=9, minute=0, timezone=kst, id="daily_report")
         self.scheduler.start()
         logger.info(f"✅ 오케스트레이터 시작 (폴링 주기: {interval}초)")
 
