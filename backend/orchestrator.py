@@ -1,6 +1,6 @@
 import logging
 import pytz
-from datetime import datetime
+from datetime import datetime, timedelta
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from backend.config import get_settings
 from backend.database import get_db
@@ -54,6 +54,7 @@ class Orchestrator:
         self.coin_executor = CoinExecutor()
         self.scheduler = AsyncIOScheduler()
         self._error_counts: dict[str, int] = {}  # 연속 오류 카운터
+        self._last_balance_alert_at: datetime | None = None  # 잔고 부족 알림 마지막 전송 시각
 
     # 백테스팅 기반 코인별 RSI 임계값 오버라이드
     _RSI_OVERRIDES: dict[str, tuple[float, float]] = {
@@ -135,6 +136,17 @@ class Orchestrator:
                 return
 
             # 4. 실행
+            if action == "BUY":
+                krw_balance = self.coin_executor.get_balance_krw()
+                if krw_balance < 10000:
+                    now = datetime.now(pytz.utc)
+                    if self._last_balance_alert_at is None or (now - self._last_balance_alert_at) > timedelta(hours=4):
+                        self._last_balance_alert_at = now
+                        await send_message(
+                            f"💰 잔고 부족 알림\n\n매수 기회 [{name or symbol}] RSI={rsi:.1f}\n"
+                            f"현재 KRW 잔고: {krw_balance:,.0f}원 (최소 10,000원 필요)\n입금 후 자동 재개됩니다."
+                        )
+                    return
             result = self.coin_executor.buy(symbol, 100.0) if action == "BUY" else self.coin_executor.sell(symbol, 100.0)
 
             if result:
@@ -157,6 +169,26 @@ class Orchestrator:
             for k in list(self._error_counts.keys()):
                 if k.startswith(err_key_prefix):
                     del self._error_counts[k]
+
+    async def _cleanup_zombie_positions(self):
+        """실제 업비트 잔고는 없는데 DB에만 남은 좀비 포지션 자동 정리."""
+        try:
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute("SELECT symbol FROM positions WHERE market = 'coin'")
+                position_symbols = [r["symbol"] for r in cur.fetchall()]
+
+            for symbol in position_symbols:
+                actual_balance = self.coin_executor.get_coin_balance(symbol)
+                if actual_balance <= 0:
+                    logger.info(f"좀비 포지션 감지 [{symbol}] — 실제 잔고 없음, DB 정리")
+                    with get_db() as conn:
+                        cur = conn.cursor()
+                        cur.execute("DELETE FROM positions WHERE market = 'coin' AND symbol = %s", (symbol,))
+                        conn.commit()
+                    await send_message(f"🧹 좀비 포지션 정리\n\n{symbol} — 실제 잔고 없음, DB에서 삭제됨")
+        except Exception as e:
+            logger.error(f"좀비 포지션 정리 오류: {e}")
 
     async def _sell_orphaned_positions(self):
         """감시 목록에 없는 포지션(예: ETH) 자동 매도."""
@@ -187,6 +219,7 @@ class Orchestrator:
             logger.error(f"고아 포지션 처리 오류: {e}")
 
     async def run_coin_cycle(self):
+        await self._cleanup_zombie_positions()
         await self._sell_orphaned_positions()
         for item in get_watchlist("coin"):
             await self.analyze_and_trade("coin", item["symbol"], item["name"] or item["symbol"])
