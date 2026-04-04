@@ -69,6 +69,25 @@ class Orchestrator:
         "KRW-SHIB": (50, 60),  # +6.0%
     }
 
+    # 백테스팅 기반 코인별 익절/손절 오버라이드 (take_profit%, stop_loss%)
+    _PROFIT_STOP_OVERRIDES: dict[str, tuple[float, float]] = {
+        "KRW-BTC":  (5,  3),   # +3.5%
+        "KRW-SOL":  (10, 3),   # +5.7%
+        "KRW-DOGE": (5,  5),   # +8.9%
+        "KRW-DOT":  (5,  3),   # +0.9%
+        "KRW-ADA":  (5,  3),   # +3.1%
+        "KRW-AVAX": (8,  5),   # +5.8%
+        "KRW-LINK": (15, 10),  # +33.0%
+        "KRW-TRX":  (5,  10),  # +4.8%
+        "KRW-SUI":  (15, 5),   # +8.0%
+        "KRW-HBAR": (20, 5),   # +17.9%
+        "KRW-ICP":  (5,  3),   # +0.3%
+        "KRW-ATOM": (15, 5),   # +11.5%
+        "KRW-UNI":  (25, 3),   # +6.4%
+        "KRW-SHIB": (8,  5),   # +6.3%
+        "KRW-BCH":  (15, 3),   # +18.0%
+    }
+
     def _get_signal(self, symbol: str, indicators: dict) -> str:
         """일봉 RSI 기반 매매 신호 반환.
         매수: RSI < rsi_buy_threshold (과매도)
@@ -101,12 +120,16 @@ class Orchestrator:
             current_price = pyupbit.get_current_price(symbol)
             if not current_price:
                 return None
+            take_profit, stop_loss = self._PROFIT_STOP_OVERRIDES.get(
+                symbol,
+                (self.settings.take_profit_percent, self.settings.stop_loss_percent)
+            )
             change_pct = (current_price - entry_price) / entry_price * 100
-            if change_pct >= self.settings.take_profit_percent:
-                logger.info(f"익절 조건 [{symbol}]: +{change_pct:.1f}% (기준: +{self.settings.take_profit_percent}%)")
+            if change_pct >= take_profit:
+                logger.info(f"익절 조건 [{symbol}]: +{change_pct:.1f}% (기준: +{take_profit}%)")
                 return "SELL"
-            if change_pct <= -self.settings.stop_loss_percent:
-                logger.info(f"손절 조건 [{symbol}]: {change_pct:.1f}% (기준: -{self.settings.stop_loss_percent}%)")
+            if change_pct <= -stop_loss:
+                logger.info(f"손절 조건 [{symbol}]: {change_pct:.1f}% (기준: -{stop_loss}%)")
                 return "SELL"
         except Exception as e:
             logger.error(f"익절/손절 체크 오류: {e}")
