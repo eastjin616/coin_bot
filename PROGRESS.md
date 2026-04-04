@@ -1,6 +1,6 @@
 # coin_bot 구현 현황
 
-## 2026-04-05: 버그 수정 + 전략 고도화 (5건)
+## 2026-04-05: 버그 수정 + 전략 고도화 (6건)
 
 ### 1. 익절/손절 오류 수정 (`orchestrator.py`)
 - `_check_profit_stop()`에서 `get_db_conn()` 미import로 매 사이클마다 오류 발생
@@ -22,6 +22,18 @@
 ### 5. BTC 하락장 필터 + 복리 매수 (`orchestrator.py`, `coin_executor.py`)
 - BTC RSI < 40이면 알트코인 전체 매수 차단 (익절/손절은 유지)
 - 고정 10,000원 → 잔고 × 20% (최소 10,000원 / 최대 50,000원) 동적 매수금액
+
+### 6. 코인별 익절/손절 % 백테스팅 최적화 (`orchestrator.py`, `backtesting/optimize.py`)
+- 2단계 백테스팅: 최적 RSI 고정 후 take_profit/stop_loss 그리드서치
+- TAKE_PROFIT_RANGE [5,8,10,15,20,25] × STOP_LOSS_RANGE [3,5,7,10] 조합
+- `python -m backtesting.optimize risk` 명령으로 재실행 가능
+- `_PROFIT_STOP_OVERRIDES` dict으로 15개 코인 개별 적용
+- 주요 결과:
+  - LINK: +15%/-10% → 백테스팅 +33.0% (기존 +10%/-5%)
+  - BCH:  +15%/-3%  → +18.0%
+  - HBAR: +20%/-5%  → +17.9%
+  - ATOM: +15%/-5%  → +11.5%
+  - BTC:  +5%/-3%   → 빠른 회전 전략
 
 ---
 
