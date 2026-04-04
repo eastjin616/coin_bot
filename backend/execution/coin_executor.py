@@ -105,6 +105,19 @@ class CoinExecutor:
             return {"symbol": symbol, "action": "SELL", "price": 0, "quantity": coin_balance}
 
         try:
+            # 포지션 entry_price 조회 (매도 전에 미리)
+            entry_price = 0.0
+            try:
+                conn = get_db_conn()
+                cur = conn.cursor()
+                cur.execute("SELECT entry_price FROM positions WHERE market = 'coin' AND symbol = %s", (symbol,))
+                row = cur.fetchone()
+                conn.close()
+                if row:
+                    entry_price = float(row["entry_price"])
+            except Exception:
+                pass
+
             result = self.upbit.sell_market_order(symbol, coin_balance)
             if result and "uuid" in result:
                 import time
@@ -116,7 +129,7 @@ class CoinExecutor:
                 self._save_trade(symbol, "SELL", confidence, price, quantity)
                 self._remove_position(symbol)
                 logger.info(f"매도 완료: {symbol} {quantity:.6f} @ {price:.0f}원")
-                return {"symbol": symbol, "action": "SELL", "price": price, "quantity": quantity}
+                return {"symbol": symbol, "action": "SELL", "price": price, "quantity": quantity, "entry_price": entry_price}
             else:
                 logger.error(f"매도 응답 오류: {symbol} → {result}")
         except Exception as e:

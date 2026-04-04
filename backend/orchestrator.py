@@ -107,7 +107,8 @@ class Orchestrator:
                     if result:
                         update_cooldown(symbol, "SELL")
                         await send_trade_alert(market=market, symbol=name or symbol, action="SELL",
-                                               confidence=100.0, price=result.get("price", 0), quantity=result.get("quantity", 0))
+                                               confidence=100.0, price=result.get("price", 0), quantity=result.get("quantity", 0),
+                                               entry_price=result.get("entry_price", 0))
                     return
 
             # 2. 기술적 지표 조회
@@ -134,7 +135,8 @@ class Orchestrator:
                 update_cooldown(symbol, action)
                 await send_trade_alert(
                     market=market, symbol=name or symbol, action=action,
-                    confidence=100.0, price=result.get("price", 0), quantity=result.get("quantity", 0)
+                    confidence=100.0, price=result.get("price", 0), quantity=result.get("quantity", 0),
+                    entry_price=result.get("entry_price", 0)
                 )
                 logger.info(f"✅ {action} 완료: {symbol}")
         except Exception as e:

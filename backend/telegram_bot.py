@@ -6,33 +6,40 @@ from backend.database import get_db_conn
 
 logger = logging.getLogger(__name__)
 
-async def send_trade_alert(market: str, symbol: str, action: str, confidence: float, price: float, quantity: float):
+async def send_trade_alert(market: str, symbol: str, action: str, confidence: float, price: float, quantity: float, entry_price: float = 0):
     settings = get_settings()
     if not settings.telegram_bot_token:
         logger.warning("텔레그램 봇 토큰 없음 — 알림 건너뜀")
         return
 
-    if market == "coin":
-        icon = "🪙"
-    elif action == "BUY":
-        icon = "📈"
-    else:
-        icon = "📉"
-
     action_text = "매수" if action == "BUY" else "매도"
-    market_text = "코인" if market == "coin" else "주식"
 
-    text = (
-        f"{icon} {action_text} 실행! ({market_text})\n\n"
-        f"종목: {symbol}\n"
-        f"신호: {action}\n"
-        f"신뢰도: {confidence:.1f}%\n"
-        f"체결가: {price:,.0f}원\n"
-        f"수량: {quantity:.6f}\n\n"
-        f"💰 자동매매 시스템"
-    )
+    if action == "BUY":
+        icon = "🟢"
+    else:
+        icon = "🔴"
 
-    await send_message(text)
+    lines = [
+        f"{icon} {action_text} 체결!",
+        f"",
+        f"종목: {symbol}",
+        f"체결가: {price:,.0f}원",
+        f"수량: {quantity:.6f}",
+        f"금액: {price * quantity:,.0f}원",
+    ]
+
+    if action == "SELL" and entry_price > 0 and price > 0:
+        pnl_pct = (price - entry_price) / entry_price * 100
+        pnl_krw = (price - entry_price) * quantity
+        pnl_icon = "📈" if pnl_pct >= 0 else "📉"
+        lines.append(f"")
+        lines.append(f"{pnl_icon} 수익률: {pnl_pct:+.2f}%")
+        lines.append(f"손익: {pnl_krw:+,.0f}원")
+
+    lines.append(f"")
+    lines.append(f"💰 자동매매 시스템")
+
+    await send_message("\n".join(lines))
 
 async def send_message(text: str):
     settings = get_settings()
