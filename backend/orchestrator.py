@@ -163,6 +163,9 @@ class Orchestrator:
         """감시 목록에 없는 포지션(예: ETH) 자동 매도."""
         try:
             watchlist_symbols = {item["symbol"] for item in get_watchlist("coin")}
+            if not watchlist_symbols:
+                logger.warning("감시 목록 조회 실패 또는 비어있음 — 고아 포지션 처리 건너뜀")
+                return
             with get_db() as conn:
                 cur = conn.cursor()
                 cur.execute("SELECT symbol FROM positions WHERE market = 'coin'")
