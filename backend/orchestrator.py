@@ -82,11 +82,10 @@ class Orchestrator:
         """익절/손절 조건 체크. 해당되면 'SELL' 반환, 아니면 None"""
         try:
             import pyupbit
-            conn = get_db_conn()
-            cur = conn.cursor()
-            cur.execute("SELECT entry_price FROM positions WHERE market = 'coin' AND symbol = %s", (symbol,))
-            row = cur.fetchone()
-            conn.close()
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute("SELECT entry_price FROM positions WHERE market = 'coin' AND symbol = %s", (symbol,))
+                row = cur.fetchone()
             if not row:
                 return None
             entry_price = float(row["entry_price"])
