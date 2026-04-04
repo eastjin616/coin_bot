@@ -88,22 +88,45 @@ class Orchestrator:
         "KRW-BCH":  (15, 3),   # +18.0%
     }
 
+    def _has_position(self, symbol: str) -> bool:
+        """DB에 해당 코인 포지션이 있는지 확인"""
+        try:
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute("SELECT 1 FROM positions WHERE market = 'coin' AND symbol = %s", (symbol,))
+                return cur.fetchone() is not None
+        except Exception:
+            return False
+
     def _get_signal(self, symbol: str, indicators: dict) -> str:
-        """일봉 RSI 기반 매매 신호 반환.
-        매수: RSI < rsi_buy_threshold (과매도)
-        매도: RSI > rsi_sell_threshold (과매수)
+        """일봉 RSI + MA Cross 기반 매매 신호 반환.
+        매수: RSI < 임계값 AND MA5 > MA20 (상승추세 확인)
+        매도: RSI > 임계값 AND 포지션 보유 중일 때만
         그 외: HOLD
         """
         rsi = indicators.get("rsi", 50)
+        ma5 = indicators.get("ma5", 0)
+        ma20 = indicators.get("ma20", 0)
         buy_th, sell_th = self._RSI_OVERRIDES.get(
             symbol,
             (self.settings.rsi_buy_threshold, self.settings.rsi_sell_threshold)
         )
 
         if rsi < buy_th:
-            return "BUY"
+            # MA Cross 확인 — MA5 > MA20이어야 매수 (상승추세)
+            if ma5 > 0 and ma20 > 0 and ma5 > ma20:
+                return "BUY"
+            elif ma5 > 0 and ma20 > 0:
+                logger.debug(f"MA Cross 미충족 [{symbol}]: MA5={ma5:.0f} < MA20={ma20:.0f}, 매수 보류")
+                return "HOLD"
+            return "BUY"  # MA 데이터 없으면 RSI만으로 판단
+
         if rsi > sell_th:
+            # 포지션 없으면 매도 시도 자체를 안 함
+            if not self._has_position(symbol):
+                return "HOLD"
             return "SELL"
+
         return "HOLD"
 
     def _check_profit_stop(self, symbol: str) -> str | None:
