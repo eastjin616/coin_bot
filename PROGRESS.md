@@ -1,5 +1,30 @@
 # coin_bot 구현 현황
 
+## 2026-04-05: 버그 수정 + 전략 고도화 (5건)
+
+### 1. 익절/손절 오류 수정 (`orchestrator.py`)
+- `_check_profit_stop()`에서 `get_db_conn()` 미import로 매 사이클마다 오류 발생
+- `with get_db() as conn:` 패턴으로 교체 → 익절/손절 정상 동작
+
+### 2. 좀비 포지션 자동 DB 정리 (`orchestrator.py`)
+- `_cleanup_zombie_positions()` 추가: DB에 포지션 있지만 실제 업비트 잔고 없는 경우 자동 삭제
+- 매 사이클마다 실행, 감지 시 텔레그램 알림
+
+### 3. 잔고 부족 시 텔레그램 알림 (`orchestrator.py`)
+- BUY 신호 발생 시 잔고 10,000원 미만이면 텔레그램 알림 (4시간마다 1회, 스팸 방지)
+
+### 4. 전체 코인 백테스팅 + RSI 최적화 (`orchestrator.py`, `backtesting/optimize.py`)
+- SYMBOLS 5개 → 전체 18개 코인으로 확장
+- 결과: LINK +30.5%(50/70), BCH +17.0%(40/60), HBAR +13.2%(45/70), ATOM +10.3%(45/60)
+- `_RSI_OVERRIDES` 1개 → 9개 코인 개별 최적 RSI 적용
+- NEAR(-6.0%), OP(-2.0%) watchlist 비활성화 → 감시 15개 코인으로 축소
+
+### 5. BTC 하락장 필터 + 복리 매수 (`orchestrator.py`, `coin_executor.py`)
+- BTC RSI < 40이면 알트코인 전체 매수 차단 (익절/손절은 유지)
+- 고정 10,000원 → 잔고 × 20% (최소 10,000원 / 최대 50,000원) 동적 매수금액
+
+---
+
 ## 2026-04-04: 버그 수정 + 안정성 개선
 
 ### 매도 price 파싱 버그 수정 (`coin_executor.py`)
