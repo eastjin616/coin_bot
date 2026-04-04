@@ -112,7 +112,7 @@ class Orchestrator:
             logger.error(f"익절/손절 체크 오류: {e}")
         return None
 
-    async def analyze_and_trade(self, market: str, symbol: str, name: str):
+    async def analyze_and_trade(self, market: str, symbol: str, name: str, bear_market: bool = False):
         try:
             # 1. 익절/손절 먼저 체크
             if market == "coin":
@@ -132,18 +132,23 @@ class Orchestrator:
             ma5 = indicators.get("ma5", 0)
             ma20 = indicators.get("ma20", 0)
 
-            # 3. RSI + MA 크로스 신호 판단
+            # 3. RSI 신호 판단
             action = self._get_signal(symbol, indicators)
             logger.info(f"TA 신호 [{symbol}]: {action} | RSI={rsi:.1f} MA5={ma5:.0f} MA20={ma20:.0f}")
 
             if action == "HOLD":
                 return
 
+            # 4. 하락장 필터 — BTC RSI < 40이면 알트코인 매수 차단
+            if action == "BUY" and bear_market and symbol != "KRW-BTC":
+                logger.info(f"하락장 필터: {symbol} 매수 차단 (BTC RSI 기준 하락장)")
+                return
+
             if is_on_cooldown(symbol, action, self.settings.cooldown_minutes):
                 logger.debug(f"쿨다운 중: {symbol} {action}")
                 return
 
-            # 4. 실행
+            # 5. 실행
             if action == "BUY":
                 krw_balance = self.coin_executor.get_balance_krw()
                 if krw_balance < 10000:
@@ -229,8 +234,20 @@ class Orchestrator:
     async def run_coin_cycle(self):
         await self._cleanup_zombie_positions()
         await self._sell_orphaned_positions()
+
+        # BTC RSI로 하락장 여부 판단
+        bear_market = False
+        try:
+            btc_indicators = get_coin_indicators("KRW-BTC")
+            btc_rsi = btc_indicators.get("rsi", 50)
+            if btc_rsi < 40:
+                bear_market = True
+                logger.warning(f"하락장 감지: BTC RSI={btc_rsi:.1f} < 40 — 알트코인 매수 차단")
+        except Exception as e:
+            logger.error(f"BTC RSI 조회 실패: {e}")
+
         for item in get_watchlist("coin"):
-            await self.analyze_and_trade("coin", item["symbol"], item["name"] or item["symbol"])
+            await self.analyze_and_trade("coin", item["symbol"], item["name"] or item["symbol"], bear_market=bear_market)
 
     def start(self):
         import pytz
