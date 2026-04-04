@@ -1,5 +1,24 @@
 # coin_bot 구현 현황
 
+## 2026-04-04: 버그 수정 + 안정성 개선
+
+### 매도 price 파싱 버그 수정 (`coin_executor.py`)
+- 매도 체결 시 `price` → `avg_price` 우선 읽도록 수정 (buy와 동일 패턴)
+- `avg_price`가 0이면 `estimated_value / quantity`로 직접 계산 (fallback 추가)
+- 기존 코드는 매도 수익률 계산이 틀릴 수 있었음
+
+### DB 연결 누수 수정 (`database.py` + 전 파일)
+- `get_db()` context manager 추가: 예외 발생 시에도 반드시 연결 해제 보장
+- `coin_executor.py`, `orchestrator.py`, `telegram_bot.py` 전체 `with get_db() as conn:` 패턴으로 통일
+- EC2 t3.micro 장기 운영 시 연결 고갈 방지
+
+### 감시 목록 제외 코인 포지션 자동 매도 (`orchestrator.py`)
+- `_sell_orphaned_positions()` 메서드 추가
+- `run_coin_cycle` 시작 시마다 watchlist에 없는 포지션(ETH 등) 자동 감지 → 매도 → 텔레그램 알림
+- ETH처럼 백테스팅 음수로 감시 제외된 코인의 기존 포지션 처리 가능
+
+---
+
 ## 2026-04-04: 전략 최적화 + 텔레그램 알림 전면 강화
 
 ### 전략 최적화

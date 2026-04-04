@@ -2,7 +2,7 @@ import logging
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 from backend.config import get_settings
-from backend.database import get_db_conn
+from backend.database import get_db
 
 logger = logging.getLogger(__name__)
 
@@ -80,27 +80,26 @@ async def send_weekly_report():
     try:
         from backend.execution.coin_executor import CoinExecutor
 
-        conn = get_db_conn()
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT action, SUM(price * quantity) as total
-            FROM trades
-            WHERE market = 'coin'
-              AND executed_at >= NOW() - INTERVAL '7 days'
-            GROUP BY action
-        """)
-        rows = {r["action"]: float(r["total"]) for r in cur.fetchall()}
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT action, SUM(price * quantity) as total
+                FROM trades
+                WHERE market = 'coin'
+                  AND executed_at >= NOW() - INTERVAL '7 days'
+                GROUP BY action
+            """)
+            rows = {r["action"]: float(r["total"]) for r in cur.fetchall()}
 
-        cur.execute("SELECT COUNT(*) as cnt FROM trades WHERE market='coin' AND executed_at >= NOW() - INTERVAL '7 days'")
-        trade_count = cur.fetchone()["cnt"]
+            cur.execute("SELECT COUNT(*) as cnt FROM trades WHERE market='coin' AND executed_at >= NOW() - INTERVAL '7 days'")
+            trade_count = cur.fetchone()["cnt"]
 
-        cur.execute("""
-            SELECT action, COUNT(*) as cnt FROM trades
-            WHERE market='coin' AND executed_at >= NOW() - INTERVAL '7 days'
-            GROUP BY action
-        """)
-        counts = {r["action"]: r["cnt"] for r in cur.fetchall()}
-        conn.close()
+            cur.execute("""
+                SELECT action, COUNT(*) as cnt FROM trades
+                WHERE market='coin' AND executed_at >= NOW() - INTERVAL '7 days'
+                GROUP BY action
+            """)
+            counts = {r["action"]: r["cnt"] for r in cur.fetchall()}
 
         executor = CoinExecutor()
         krw = executor.get_balance_krw()
@@ -130,11 +129,10 @@ async def send_daily_position_report():
         import pyupbit
         from backend.execution.coin_executor import CoinExecutor
 
-        conn = get_db_conn()
-        cur = conn.cursor()
-        cur.execute("SELECT symbol, entry_price, quantity FROM positions WHERE market = 'coin'")
-        rows = cur.fetchall()
-        conn.close()
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT symbol, entry_price, quantity FROM positions WHERE market = 'coin'")
+            rows = cur.fetchall()
 
         executor = CoinExecutor()
         krw = executor.get_balance_krw()
@@ -189,11 +187,10 @@ async def _balance_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         executor = CoinExecutor()
         krw_balance = float(executor.get_balance_krw() or 0)
 
-        conn = get_db_conn()
-        cur = conn.cursor()
-        cur.execute("SELECT market, symbol, entry_price, quantity FROM positions")
-        rows = cur.fetchall()
-        conn.close()
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT market, symbol, entry_price, quantity FROM positions")
+            rows = cur.fetchall()
 
         lines = [f"💰 업비트 잔고: {krw_balance:,.0f}원\n"]
 
@@ -223,11 +220,10 @@ async def _status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         from backend.ai.chart_generator import get_coin_indicators
         from backend.execution.coin_executor import CoinExecutor
 
-        conn = get_db_conn()
-        cur = conn.cursor()
-        cur.execute("SELECT symbol, entry_price, quantity FROM positions WHERE market = 'coin'")
-        rows = cur.fetchall()
-        conn.close()
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT symbol, entry_price, quantity FROM positions WHERE market = 'coin'")
+            rows = cur.fetchall()
 
         executor = CoinExecutor()
         krw = executor.get_balance_krw()

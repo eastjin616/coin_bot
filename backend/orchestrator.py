@@ -3,7 +3,7 @@ import pytz
 from datetime import datetime
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from backend.config import get_settings
-from backend.database import get_db_conn
+from backend.database import get_db
 from backend.ai.chart_generator import get_coin_indicators
 from backend.execution.coin_executor import CoinExecutor
 from backend.telegram_bot import send_trade_alert, send_disk_alert, send_weekly_report, send_daily_position_report, send_message
@@ -12,11 +12,10 @@ logger = logging.getLogger(__name__)
 
 def is_on_cooldown(symbol: str, action: str, cooldown_minutes: int) -> bool:
     try:
-        conn = get_db_conn()
-        cur = conn.cursor()
-        cur.execute("SELECT last_executed_at FROM cooldowns WHERE symbol = %s AND action = %s", (symbol, action))
-        row = cur.fetchone()
-        conn.close()
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT last_executed_at FROM cooldowns WHERE symbol = %s AND action = %s", (symbol, action))
+            row = cur.fetchone()
         if not row:
             return False
         last_executed = row["last_executed_at"].replace(tzinfo=pytz.utc)
@@ -28,24 +27,22 @@ def is_on_cooldown(symbol: str, action: str, cooldown_minutes: int) -> bool:
 
 def update_cooldown(symbol: str, action: str):
     try:
-        conn = get_db_conn()
-        cur = conn.cursor()
-        cur.execute(
-            "INSERT INTO cooldowns (symbol, action, last_executed_at) VALUES (%s, %s, NOW()) ON CONFLICT (symbol, action) DO UPDATE SET last_executed_at = NOW()",
-            (symbol, action)
-        )
-        conn.commit()
-        conn.close()
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO cooldowns (symbol, action, last_executed_at) VALUES (%s, %s, NOW()) ON CONFLICT (symbol, action) DO UPDATE SET last_executed_at = NOW()",
+                (symbol, action)
+            )
+            conn.commit()
     except Exception as e:
         logger.error(f"쿨다운 업데이트 실패: {e}")
 
 def get_watchlist(market: str) -> list:
     try:
-        conn = get_db_conn()
-        cur = conn.cursor()
-        cur.execute("SELECT symbol, name FROM watchlist WHERE market = %s AND active = TRUE", (market,))
-        rows = cur.fetchall()
-        conn.close()
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT symbol, name FROM watchlist WHERE market = %s AND active = TRUE", (market,))
+            rows = cur.fetchall()
         return [{"symbol": r["symbol"], "name": r["name"]} for r in rows]
     except Exception as e:
         logger.error(f"감시 종목 조회 실패: {e}")
@@ -162,7 +159,33 @@ class Orchestrator:
                 if k.startswith(err_key_prefix):
                     del self._error_counts[k]
 
+    async def _sell_orphaned_positions(self):
+        """감시 목록에 없는 포지션(예: ETH) 자동 매도."""
+        try:
+            watchlist_symbols = {item["symbol"] for item in get_watchlist("coin")}
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute("SELECT symbol FROM positions WHERE market = 'coin'")
+                position_symbols = [r["symbol"] for r in cur.fetchall()]
+
+            for symbol in position_symbols:
+                if symbol not in watchlist_symbols:
+                    logger.info(f"고아 포지션 감지 [{symbol}] — 자동 매도 시도")
+                    result = self.coin_executor.sell(symbol, 100.0)
+                    if result:
+                        update_cooldown(symbol, "SELL")
+                        await send_trade_alert(
+                            market="coin", symbol=symbol, action="SELL",
+                            confidence=100.0, price=result.get("price", 0),
+                            quantity=result.get("quantity", 0),
+                            entry_price=result.get("entry_price", 0)
+                        )
+                        logger.info(f"고아 포지션 매도 완료: {symbol}")
+        except Exception as e:
+            logger.error(f"고아 포지션 처리 오류: {e}")
+
     async def run_coin_cycle(self):
+        await self._sell_orphaned_positions()
         for item in get_watchlist("coin"):
             await self.analyze_and_trade("coin", item["symbol"], item["name"] or item["symbol"])
 

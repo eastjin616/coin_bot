@@ -1,7 +1,7 @@
 import logging
 import pyupbit
 from backend.config import get_settings
-from backend.database import get_db_conn
+from backend.database import get_db
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ class CoinExecutor:
         if not self.upbit:
             return 0.0
         try:
-            ticker = symbol.split("-")[1]  # KRW-BTC → BTC
+            ticker = symbol.split("-")[1]
             return float(self.upbit.get_balance(ticker) or 0)
         except Exception as e:
             logger.error(f"코인 잔고 조회 실패: {e}")
@@ -108,13 +108,12 @@ class CoinExecutor:
             # 포지션 entry_price 조회 (매도 전에 미리)
             entry_price = 0.0
             try:
-                conn = get_db_conn()
-                cur = conn.cursor()
-                cur.execute("SELECT entry_price FROM positions WHERE market = 'coin' AND symbol = %s", (symbol,))
-                row = cur.fetchone()
-                conn.close()
-                if row:
-                    entry_price = float(row["entry_price"])
+                with get_db() as conn:
+                    cur = conn.cursor()
+                    cur.execute("SELECT entry_price FROM positions WHERE market = 'coin' AND symbol = %s", (symbol,))
+                    row = cur.fetchone()
+                    if row:
+                        entry_price = float(row["entry_price"])
             except Exception:
                 pass
 
@@ -123,8 +122,11 @@ class CoinExecutor:
                 import time
                 time.sleep(0.5)
                 order_detail = self.upbit.get_order(result["uuid"])
-                price = float(order_detail.get("price") or order_detail.get("avg_price") or 0)
+                price = float(order_detail.get("avg_price") or order_detail.get("price") or 0)
                 quantity = float(order_detail.get("executed_volume") or coin_balance)
+                if price == 0 and quantity > 0:
+                    estimated_value = coin_balance * current_price
+                    price = estimated_value / quantity  # 직접 계산
 
                 self._save_trade(symbol, "SELL", confidence, price, quantity)
                 self._remove_position(symbol)
@@ -138,52 +140,49 @@ class CoinExecutor:
 
     def _save_trade(self, symbol: str, action: str, confidence: float, price: float, quantity: float):
         try:
-            conn = get_db_conn()
-            cur = conn.cursor()
-            cur.execute(
-                "INSERT INTO trades (market, symbol, action, confidence, price, quantity) VALUES (%s, %s, %s, %s, %s, %s)",
-                ("coin", symbol, action, confidence, price, quantity)
-            )
-            conn.commit()
-            conn.close()
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    "INSERT INTO trades (market, symbol, action, confidence, price, quantity) VALUES (%s, %s, %s, %s, %s, %s)",
+                    ("coin", symbol, action, confidence, price, quantity)
+                )
+                conn.commit()
         except Exception as e:
             logger.error(f"거래 저장 실패: {e}")
 
     def _save_position(self, symbol: str, price: float, quantity: float):
         try:
-            conn = get_db_conn()
-            cur = conn.cursor()
-            cur.execute(
-                "SELECT entry_price, quantity FROM positions WHERE market = 'coin' AND symbol = %s",
-                (symbol,)
-            )
-            row = cur.fetchone()
-            if row:
-                old_price = float(row["entry_price"])
-                old_qty = float(row["quantity"])
-                new_qty = old_qty + quantity
-                new_avg = (old_price * old_qty + price * quantity) / new_qty
+            with get_db() as conn:
+                cur = conn.cursor()
                 cur.execute(
-                    "UPDATE positions SET entry_price = %s, quantity = %s WHERE market = 'coin' AND symbol = %s",
-                    (new_avg, new_qty, symbol)
+                    "SELECT entry_price, quantity FROM positions WHERE market = 'coin' AND symbol = %s",
+                    (symbol,)
                 )
-                logger.info(f"포지션 추가매수 [{symbol}]: 평균단가 {new_avg:.0f}원, 수량 {new_qty:.6f}")
-            else:
-                cur.execute(
-                    "INSERT INTO positions (market, symbol, entry_price, quantity) VALUES (%s, %s, %s, %s)",
-                    ("coin", symbol, price, quantity)
-                )
-            conn.commit()
-            conn.close()
+                row = cur.fetchone()
+                if row:
+                    old_price = float(row["entry_price"])
+                    old_qty = float(row["quantity"])
+                    new_qty = old_qty + quantity
+                    new_avg = (old_price * old_qty + price * quantity) / new_qty
+                    cur.execute(
+                        "UPDATE positions SET entry_price = %s, quantity = %s WHERE market = 'coin' AND symbol = %s",
+                        (new_avg, new_qty, symbol)
+                    )
+                    logger.info(f"포지션 추가매수 [{symbol}]: 평균단가 {new_avg:.0f}원, 수량 {new_qty:.6f}")
+                else:
+                    cur.execute(
+                        "INSERT INTO positions (market, symbol, entry_price, quantity) VALUES (%s, %s, %s, %s)",
+                        ("coin", symbol, price, quantity)
+                    )
+                conn.commit()
         except Exception as e:
             logger.error(f"포지션 저장 실패: {e}")
 
     def _remove_position(self, symbol: str):
         try:
-            conn = get_db_conn()
-            cur = conn.cursor()
-            cur.execute("DELETE FROM positions WHERE market = 'coin' AND symbol = %s", (symbol,))
-            conn.commit()
-            conn.close()
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute("DELETE FROM positions WHERE market = 'coin' AND symbol = %s", (symbol,))
+                conn.commit()
         except Exception as e:
             logger.error(f"포지션 삭제 실패: {e}")

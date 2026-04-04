@@ -1,4 +1,5 @@
 import psycopg
+from contextlib import contextmanager
 
 from backend.config import get_settings
 
@@ -8,6 +9,16 @@ def get_db_conn():
     settings = get_settings()
     conn = psycopg.connect(settings.database_url, row_factory=psycopg.rows.dict_row)
     return conn
+
+
+@contextmanager
+def get_db():
+    """DB 연결 컨텍스트 매니저 — 예외 발생 시에도 반드시 연결 해제."""
+    conn = get_db_conn()
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 def create_tables() -> None:
