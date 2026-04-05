@@ -124,46 +124,121 @@ class Orchestrator:
         return "HOLD"
 
     def _check_profit_stop(self, symbol: str) -> str | None:
-        """익절/손절 조건 체크. 해당되면 'SELL' 반환, 아니면 None"""
+        """트레일링 스탑 + 손절 체크.
+        - 손절: entry_price 기준 -stop_loss% 이하 → SELL
+        - 트레일링: highest_price 기준 -stop_loss% 하락 (활성화 조건 충족 시) → SELL
+        """
         try:
             import pyupbit
             with get_db() as conn:
                 cur = conn.cursor()
-                cur.execute("SELECT entry_price FROM positions WHERE market = 'coin' AND symbol = %s", (symbol,))
+                cur.execute(
+                    "SELECT entry_price, highest_price FROM positions WHERE market = 'coin' AND symbol = %s",
+                    (symbol,)
+                )
                 row = cur.fetchone()
             if not row:
                 return None
+
             entry_price = float(row["entry_price"])
+            highest_price = float(row["highest_price"] or entry_price)
             current_price = pyupbit.get_current_price(symbol)
             if not current_price:
                 return None
-            take_profit, stop_loss = self._PROFIT_STOP_OVERRIDES.get(
+
+            _, stop_loss = self._PROFIT_STOP_OVERRIDES.get(
                 symbol,
                 (self.settings.take_profit_percent, self.settings.stop_loss_percent)
             )
+
+            # 1. 손절: entry_price 기준
             change_pct = (current_price - entry_price) / entry_price * 100
-            if change_pct >= take_profit:
-                logger.info(f"익절 조건 [{symbol}]: +{change_pct:.1f}% (기준: +{take_profit}%)")
-                return "SELL"
             if change_pct <= -stop_loss:
-                logger.info(f"손절 조건 [{symbol}]: {change_pct:.1f}% (기준: -{stop_loss}%)")
+                logger.info(f"손절 [{symbol}]: {change_pct:.1f}% (기준: -{stop_loss}%)")
                 return "SELL"
+
+            # 2. highest_price 갱신 (예외 발생 시 트레일링 스킵)
+            trailing_active = False
+            try:
+                if current_price > highest_price:
+                    with get_db() as conn:
+                        cur = conn.cursor()
+                        cur.execute(
+                            "UPDATE positions SET highest_price = %s WHERE market = 'coin' AND symbol = %s",
+                            (current_price, symbol)
+                        )
+                        conn.commit()
+                    highest_price = current_price
+                trailing_active = True
+            except Exception as e:
+                logger.warning(f"highest_price 갱신 실패 [{symbol}] — 트레일링 스킵: {e}")
+                return None
+
+            if not trailing_active:
+                return None
+
+            # 3. 트레일링 스탑: 활성화 조건 충족 시에만
+            # 활성화: highest_price >= entry_price * (1 + stop_loss/200)
+            # 발동: current_price <= highest_price * (1 - stop_loss/100)
+            activation_threshold = entry_price * (1 + stop_loss / 200)
+            if highest_price >= activation_threshold:
+                trailing_trigger = highest_price * (1 - stop_loss / 100)
+                if current_price <= trailing_trigger:
+                    trail_pct = (highest_price - current_price) / highest_price * 100
+                    logger.info(
+                        f"트레일링 스탑 [{symbol}]: 최고가 {highest_price:.0f}원 → 현재가 {current_price:.0f}원 "
+                        f"(-{trail_pct:.1f}%, 기준: -{stop_loss}%)"
+                    )
+                    return "SELL"
+
         except Exception as e:
-            logger.error(f"익절/손절 체크 오류: {e}")
+            logger.error(f"트레일링/손절 체크 오류: {e}")
         return None
 
     async def analyze_and_trade(self, market: str, symbol: str, name: str, bear_market: bool = False):
         try:
-            # 1. 익절/손절 먼저 체크
+            # 1. 트레일링/손절 먼저 체크
             if market == "coin":
                 forced_action = self._check_profit_stop(symbol)
                 if forced_action:
+                    # 매도 전 highest_price 조회 (알림용)
+                    highest_price_for_alert = 0.0
+                    try:
+                        with get_db() as conn:
+                            cur = conn.cursor()
+                            cur.execute(
+                                "SELECT highest_price FROM positions WHERE market = 'coin' AND symbol = %s",
+                                (symbol,)
+                            )
+                            row = cur.fetchone()
+                            if row:
+                                highest_price_for_alert = float(row["highest_price"] or 0)
+                    except Exception:
+                        pass
+
                     result = self.coin_executor.sell(symbol, 100.0)
                     if result:
                         update_cooldown(symbol, "SELL")
-                        await send_trade_alert(market=market, symbol=name or symbol, action="SELL",
-                                               confidence=100.0, price=result.get("price", 0), quantity=result.get("quantity", 0),
-                                               entry_price=result.get("entry_price", 0))
+                        entry_price = result.get("entry_price", 0)
+                        price = result.get("price", 0)
+                        pnl_pct = result.get("pnl_pct", 0)
+                        pnl_krw = result.get("pnl_krw", 0)
+
+                        if pnl_pct >= 0:
+                            # 트레일링 스탑 (수익 실현)
+                            trail_drop = (highest_price_for_alert - price) / highest_price_for_alert * 100 if highest_price_for_alert > 0 else 0
+                            await send_message(
+                                f"📉 트레일링 스탑 [{name or symbol}]\n"
+                                f"최고가: {highest_price_for_alert:,.0f}원 → 현재가: {price:,.0f}원 (-{trail_drop:.1f}%)\n"
+                                f"진입가: {entry_price:,.0f}원 | 손익: {pnl_pct:+.2f}% ({pnl_krw:+,.0f}원)"
+                            )
+                        else:
+                            # 손절
+                            await send_message(
+                                f"🛑 손절 [{name or symbol}]\n"
+                                f"진입가: {entry_price:,.0f}원 → 체결가: {price:,.0f}원\n"
+                                f"손익: {pnl_pct:+.2f}% ({pnl_krw:+,.0f}원)"
+                            )
                     return
 
             # 2. 기술적 지표 조회
