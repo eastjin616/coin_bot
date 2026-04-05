@@ -99,8 +99,8 @@ class Orchestrator:
             return False
 
     def _get_signal(self, symbol: str, indicators: dict) -> str:
-        """일봉 RSI + MA Cross 기반 매매 신호 반환.
-        매수: RSI < 임계값 AND MA5 > MA20 (상승추세 확인)
+        """일봉 RSI 기반 매매 신호 반환.
+        매수: RSI < 임계값 (과매도)
         매도: RSI > 임계값 AND 포지션 보유 중일 때만
         그 외: HOLD
         """
@@ -113,13 +113,7 @@ class Orchestrator:
         )
 
         if rsi < buy_th:
-            # MA Cross 확인 — MA5 > MA20이어야 매수 (상승추세)
-            if ma5 > 0 and ma20 > 0 and ma5 > ma20:
-                return "BUY"
-            elif ma5 > 0 and ma20 > 0:
-                logger.debug(f"MA Cross 미충족 [{symbol}]: MA5={ma5:.0f} < MA20={ma20:.0f}, 매수 보류")
-                return "HOLD"
-            return "BUY"  # MA 데이터 없으면 RSI만으로 판단
+            return "BUY"
 
         if rsi > sell_th:
             # 포지션 없으면 매도 시도 자체를 안 함
