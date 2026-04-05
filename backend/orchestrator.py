@@ -179,7 +179,12 @@ class Orchestrator:
             if action == "HOLD":
                 return
 
-            # 4. 하락장 필터 — BTC RSI < 40이면 알트코인 매수 차단
+            # 4. 이미 포지션 보유 중이면 재매수 차단 (쿨다운 만료 후 중복 매수 방지)
+            if action == "BUY" and self._has_position(symbol):
+                logger.debug(f"포지션 보유 중 — 재매수 차단: {symbol}")
+                return
+
+            # 5. 하락장 필터 — BTC RSI < 40이면 알트코인 매수 차단
             if action == "BUY" and bear_market and symbol != "KRW-BTC":
                 logger.info(f"하락장 필터: {symbol} 매수 차단 (BTC RSI 기준 하락장)")
                 return

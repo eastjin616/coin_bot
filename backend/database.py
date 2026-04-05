@@ -36,8 +36,12 @@ def create_tables() -> None:
                     confidence FLOAT NOT NULL,
                     price DECIMAL(20, 8),
                     quantity DECIMAL(20, 8),
+                    pnl_krw DECIMAL(20, 2) DEFAULT 0,
+                    pnl_pct DECIMAL(10, 4) DEFAULT 0,
                     executed_at TIMESTAMP DEFAULT NOW()
                 );
+                ALTER TABLE trades ADD COLUMN IF NOT EXISTS pnl_krw DECIMAL(20, 2) DEFAULT 0;
+                ALTER TABLE trades ADD COLUMN IF NOT EXISTS pnl_pct DECIMAL(10, 4) DEFAULT 0;
             """)
 
             # 감시 종목

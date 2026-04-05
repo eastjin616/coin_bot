@@ -131,23 +131,26 @@ class CoinExecutor:
                     estimated_value = coin_balance * current_price
                     price = estimated_value / quantity  # 직접 계산
 
-                self._save_trade(symbol, "SELL", confidence, price, quantity)
+                pnl_krw = (price - entry_price) * quantity if entry_price > 0 else 0.0
+                pnl_pct = (price - entry_price) / entry_price * 100 if entry_price > 0 else 0.0
+                self._save_trade(symbol, "SELL", confidence, price, quantity, pnl_krw=pnl_krw, pnl_pct=pnl_pct)
                 self._remove_position(symbol)
-                logger.info(f"매도 완료: {symbol} {quantity:.6f} @ {price:.0f}원")
-                return {"symbol": symbol, "action": "SELL", "price": price, "quantity": quantity, "entry_price": entry_price}
+                logger.info(f"매도 완료: {symbol} {quantity:.6f} @ {price:.0f}원 | 손익 {pnl_pct:+.2f}% ({pnl_krw:+,.0f}원)")
+                return {"symbol": symbol, "action": "SELL", "price": price, "quantity": quantity, "entry_price": entry_price, "pnl_pct": pnl_pct, "pnl_krw": pnl_krw}
             else:
                 logger.error(f"매도 응답 오류: {symbol} → {result}")
         except Exception as e:
             logger.error(f"매도 실패: {e}")
         return None
 
-    def _save_trade(self, symbol: str, action: str, confidence: float, price: float, quantity: float):
+    def _save_trade(self, symbol: str, action: str, confidence: float, price: float, quantity: float,
+                    pnl_krw: float = 0.0, pnl_pct: float = 0.0):
         try:
             with get_db() as conn:
                 cur = conn.cursor()
                 cur.execute(
-                    "INSERT INTO trades (market, symbol, action, confidence, price, quantity) VALUES (%s, %s, %s, %s, %s, %s)",
-                    ("coin", symbol, action, confidence, price, quantity)
+                    "INSERT INTO trades (market, symbol, action, confidence, price, quantity, pnl_krw, pnl_pct) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                    ("coin", symbol, action, confidence, price, quantity, pnl_krw, pnl_pct)
                 )
                 conn.commit()
         except Exception as e:
