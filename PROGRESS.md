@@ -1,5 +1,20 @@
 # coin_bot 구현 현황
 
+## 2026-04-05: 트레일링 스탑 도입 (고정 익절 제거)
+
+### 변경 내용 (`orchestrator.py`, `coin_executor.py`, `database.py`)
+- 기존 고정 익절(+5~25%) 제거 → 트레일링 스탑으로 대체
+- `positions` 테이블에 `highest_price` 컬럼 추가
+- 트레일링 로직:
+  - 손절: `entry_price` 기준 `-stop_loss%` (기존 유지)
+  - 트레일링 활성화: `highest_price >= entry_price × (1 + stop_loss/200)`
+  - 트레일링 발동: `current_price <= highest_price × (1 - stop_loss/100)`
+- 트레일링/손절 텔레그램 알림 구분 (📉 트레일링 스탑 / 🛑 손절)
+- `_check_profit_stop()` 반환 타입 `tuple[action, reason, highest_price]`로 개선 (race condition 제거)
+- 기존 운영 포지션 6개 `highest_price` → `entry_price`로 자동 초기화
+
+---
+
 ## 2026-04-05: 중복 매수 버그 수정 + 손익 기록 추가 + README 포트폴리오 강화
 
 ### 중복 매수 버그 수정 (`orchestrator.py`)
