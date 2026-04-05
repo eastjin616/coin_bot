@@ -1,5 +1,31 @@
 # coin_bot 구현 현황
 
+## 2026-04-05: 중복 매수 버그 수정 + 손익 기록 추가 + README 포트폴리오 강화
+
+### 중복 매수 버그 수정 (`orchestrator.py`)
+- 원인: 쿨다운(5분) 만료 후 RSI가 여전히 낮으면 같은 코인 재매수 → SOL/DOT 각 30,000원 몰빵
+- 수정: `analyze_and_trade()`에 포지션 보유 중 재매수 차단 로직 추가
+  - BUY 신호 발생 시 `_has_position()` 확인 → 이미 보유 중이면 HOLD 처리
+  - 코인 매도 후에만 재진입 가능
+
+### 매도 손익 DB 기록 추가 (`coin_executor.py`, `database.py`)
+- trades 테이블에 `pnl_krw`, `pnl_pct` 컬럼 추가
+- 매도 시 entry_price 기준 실현 손익(원/%) 자동 계산 후 저장
+- 이후 수익률 분석, 주간 리포트 활용 가능
+
+### README 포트폴리오 강화 (`README.md`)
+- 아키텍처 다이어그램 (ASCII) 추가
+- 전략 플로우, 코인별 파라미터 테이블, 백테스터 설명 정리
+- 로컬 셋업 가이드, 텔레그램 명령어 추가
+- 레포 public 전환 (포트폴리오용)
+
+### EC2 DB 현황 (2026-04-05)
+- 보유 포지션 6개: ATOM(10K), BTC(25K), DOT(30K), LINK(10K), SOL(30K), SUI(10K)
+- 총 투자: 약 115,000원
+- KRW 잔고: 0원 (수동 매수로 소진)
+
+---
+
 ## 2026-04-05: MA Cross 조건 제거 — RSI 단독 전략 복귀
 
 ### MA Cross 진입 조건 제거 (`orchestrator.py`)
