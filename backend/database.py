@@ -75,8 +75,11 @@ def create_tables() -> None:
                     symbol VARCHAR(20) NOT NULL,
                     entry_price DECIMAL(20, 8),
                     quantity DECIMAL(20, 8),
+                    highest_price DECIMAL(20, 8) DEFAULT 0,
                     opened_at TIMESTAMP DEFAULT NOW()
                 );
+                ALTER TABLE positions ADD COLUMN IF NOT EXISTS highest_price DECIMAL(20, 8) DEFAULT 0;
+                UPDATE positions SET highest_price = entry_price WHERE highest_price = 0 OR highest_price IS NULL;
             """)
 
             # 기본 감시 종목 삽입 (이미 존재하면 무시)
