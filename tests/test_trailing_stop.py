@@ -47,7 +47,7 @@ class TestCheckProfitStop:
 
             result = self.orc._check_profit_stop(symbol)
 
-        assert result == "SELL"
+        assert result is not None and result[0] == "SELL" and result[1] == "stoploss"
 
     # 케이스 2: 트레일링 활성화 + 발동 — 최고가 대비 -stop_loss% 하락
     def test_trailing_stop_triggers_when_activated(self):
@@ -68,7 +68,7 @@ class TestCheckProfitStop:
 
             result = self.orc._check_profit_stop(symbol)
 
-        assert result == "SELL"
+        assert result is not None and result[0] == "SELL" and result[1] == "trailing"
 
     # 케이스 3: 트레일링 미활성화 — 최고가가 활성화 임계값 미달
     def test_trailing_not_triggered_before_activation(self):
@@ -130,4 +130,4 @@ class TestCheckProfitStop:
 
             result = self.orc._check_profit_stop(symbol)
 
-        assert result == "SELL"
+        assert result is not None and result[0] == "SELL" and result[1] == "trailing"
