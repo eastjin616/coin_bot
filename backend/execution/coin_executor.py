@@ -174,11 +174,13 @@ class CoinExecutor:
                         "UPDATE positions SET entry_price = %s, quantity = %s WHERE market = 'coin' AND symbol = %s",
                         (new_avg, new_qty, symbol)
                     )
+                    # highest_price는 변경하지 않음 (추가매수 시 기존 최고가 유지)
                     logger.info(f"포지션 추가매수 [{symbol}]: 평균단가 {new_avg:.0f}원, 수량 {new_qty:.6f}")
                 else:
                     cur.execute(
-                        "INSERT INTO positions (market, symbol, entry_price, quantity) VALUES (%s, %s, %s, %s)",
-                        ("coin", symbol, price, quantity)
+                        "INSERT INTO positions (market, symbol, entry_price, quantity, highest_price) "
+                        "VALUES (%s, %s, %s, %s, %s)",
+                        ("coin", symbol, price, quantity, price)  # highest_price = entry_price
                     )
                 conn.commit()
         except Exception as e:
