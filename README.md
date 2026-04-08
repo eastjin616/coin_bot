@@ -169,7 +169,7 @@ This means the strategy is not yet robust enough to claim a strong recent live e
 
 ## Runtime Universe
 
-Current new-buy runtime universe is intentionally narrower than the stored watchlist:
+Current new-buy runtime universe is intentionally narrower, and the DB watchlist is auto-synced to match it:
 - `KRW-BTC`
 - `KRW-SOL`
 - `KRW-DOGE`
@@ -178,7 +178,9 @@ Current new-buy runtime universe is intentionally narrower than the stored watch
 - `KRW-UNI`
 - `KRW-BCH`
 
-Other coins may remain in the DB/watchlist for monitoring or position cleanup, but new entries are blocked at runtime.
+Other coins can still be held temporarily as existing positions. New entries are blocked, and the active watchlist is automatically aligned to:
+- the runtime buy universe
+- current held positions
 
 ## Regime Filter
 
@@ -186,6 +188,40 @@ Altcoin buys are blocked when BTC shows at least 2 of the following 3 bearish co
 - RSI `< 45`
 - `MA5 < MA20`
 - Current price `< MA20`
+
+## Runtime Status
+
+Operational status is available from:
+- Telegram `/status`
+- API `GET /api/runtime/status`
+
+The runtime status includes:
+- `regime` (`risk_on` / `caution` / `risk_off`)
+- `risk_off` 여부
+- 권장 매수 비중
+- BTC RSI / MA5 / MA20 / 현재가
+- 신규 매수 허용 종목
+- 신규 매수 제외 종목
+- 종목별 허용/제외 사유
+- active watchlist 종목
+- 최근 30일 실현손익 / 승률 / 매도 횟수
+
+## Deprioritized Positions
+
+Coins outside the runtime buy universe are not force-sold immediately.
+
+Instead, if they are already held, the bot will prefer exiting them when either:
+- unrealized P&L reaches `+1.0%` or better
+- RSI reaches a weak sell zone
+
+## Position Sizing
+
+The bot now uses regime-aware sizing:
+- `risk_on`: `20%`
+- `caution`: `10%`
+- `risk_off`: `5%`
+
+For altcoins, `risk_off` still blocks new buys. The ratio is mainly relevant for BTC or future regime-aware expansions.
 
 ## Testing
 

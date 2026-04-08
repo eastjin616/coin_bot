@@ -7,6 +7,7 @@ from backend.database import get_db
 from backend.ai.chart_generator import get_coin_indicators
 from backend.execution.coin_executor import CoinExecutor
 from backend.telegram_bot import send_trade_alert, send_disk_alert, send_weekly_report, send_daily_position_report, send_message
+from backend.runtime_status import ACTIVE_BUY_SYMBOLS, get_market_regime, get_order_size_ratio_for_regime, is_risk_off_market
 
 logger = logging.getLogger(__name__)
 
@@ -97,38 +98,76 @@ class Orchestrator:
     }
 
     # 최근 현실화 백테스트/OOS 기준으로 운영 매수 허용 종목만 유지
-    _ACTIVE_BUY_SYMBOLS: set[str] = {
-        "KRW-SOL",
-        "KRW-DOGE",
-        "KRW-LINK",
-        "KRW-HBAR",
-        "KRW-UNI",
-        "KRW-BCH",
-    }
-
     def _is_buy_enabled_symbol(self, symbol: str) -> bool:
-        return symbol in self._ACTIVE_BUY_SYMBOLS or symbol == "KRW-BTC"
+        return symbol in ACTIVE_BUY_SYMBOLS
 
-    def _is_risk_off_market(self, indicators: dict) -> bool:
-        """BTC 기준 리스크오프 장세 판별.
-        조건 중 2개 이상 충족 시 알트코인 매수 차단:
-        - RSI < 45
-        - MA5 < MA20
-        - 현재가 < MA20
-        """
-        rsi = indicators.get("rsi", 50)
-        ma5 = indicators.get("ma5", 0)
-        ma20 = indicators.get("ma20", 0)
-        current_price = indicators.get("current_price", 0)
+    def _get_position_entry_price(self, symbol: str) -> float | None:
+        try:
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT entry_price FROM positions WHERE market = 'coin' AND symbol = %s",
+                    (symbol,)
+                )
+                row = cur.fetchone()
+            return float(row["entry_price"]) if row else None
+        except Exception:
+            return None
 
-        signals = 0
-        if rsi < 45:
-            signals += 1
-        if ma5 and ma20 and ma5 < ma20:
-            signals += 1
-        if current_price and ma20 and current_price < ma20:
-            signals += 1
-        return signals >= 2
+    def _should_reduce_deprioritized_position(self, symbol: str, indicators: dict) -> bool:
+        """운영 제외 종목은 수익권 또는 약한 매도 구간에서 우선 정리."""
+        if self._is_buy_enabled_symbol(symbol):
+            return False
+        if not self._has_position(symbol):
+            return False
+
+        entry_price = self._get_position_entry_price(symbol)
+        current_price = float(indicators.get("current_price") or 0)
+        if not entry_price or not current_price:
+            return False
+
+        pnl_pct = (current_price - entry_price) / entry_price * 100
+        rsi = float(indicators.get("rsi") or 50)
+        _, sell_th = self._RSI_OVERRIDES.get(
+            symbol,
+            (self.settings.rsi_buy_threshold, self.settings.rsi_sell_threshold)
+        )
+        return pnl_pct >= 1.0 or rsi >= max(sell_th - 5, 55)
+
+    async def _sync_runtime_watchlist(self):
+        """운영 허용 종목과 DB watchlist를 동기화."""
+        try:
+            runtime_symbols = set(ACTIVE_BUY_SYMBOLS.keys())
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute("SELECT symbol FROM positions WHERE market = 'coin'")
+                held_symbols = {row["symbol"] for row in cur.fetchall()}
+
+            managed_symbols = sorted(runtime_symbols | held_symbols)
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    """
+                    UPDATE watchlist
+                    SET active = FALSE
+                    WHERE market = 'coin' AND symbol <> ALL(%s)
+                    """,
+                    (managed_symbols,)
+                )
+                for symbol in managed_symbols:
+                    name = ACTIVE_BUY_SYMBOLS.get(symbol, symbol.split("-")[1])
+                    cur.execute(
+                        """
+                        INSERT INTO watchlist (market, symbol, name, active)
+                        VALUES ('coin', %s, %s, TRUE)
+                        ON CONFLICT (market, symbol)
+                        DO UPDATE SET active = TRUE, name = EXCLUDED.name
+                        """,
+                        (symbol, name)
+                    )
+                conn.commit()
+        except Exception as e:
+            logger.error(f"runtime watchlist 동기화 오류: {e}")
 
     def _has_position(self, symbol: str) -> bool:
         """DB에 해당 코인 포지션이 있는지 확인"""
@@ -233,7 +272,7 @@ class Orchestrator:
             logger.error(f"트레일링/손절 체크 오류: {e}")
         return None
 
-    async def analyze_and_trade(self, market: str, symbol: str, name: str, bear_market: bool = False):
+    async def analyze_and_trade(self, market: str, symbol: str, name: str, bear_market: bool = False, market_regime: str = "risk_on"):
         try:
             # 1. 트레일링/손절 먼저 체크
             if market == "coin":
@@ -271,6 +310,9 @@ class Orchestrator:
 
             # 3. RSI 신호 판단
             action = self._get_signal(symbol, indicators)
+            if action == "HOLD" and self._should_reduce_deprioritized_position(symbol, indicators):
+                action = "SELL"
+                logger.info(f"운영 제외 종목 우선 정리: {symbol} | RSI={rsi:.1f}")
             logger.info(f"TA 신호 [{symbol}]: {action} | RSI={rsi:.1f} MA5={ma5:.0f} MA20={ma20:.0f}")
 
             if action == "HOLD":
@@ -307,7 +349,11 @@ class Orchestrator:
                             f"현재 KRW 잔고: {krw_balance:,.0f}원 (최소 10,000원 필요)\n입금 후 자동 재개됩니다."
                         )
                     return
-            result = self.coin_executor.buy(symbol, 100.0) if action == "BUY" else self.coin_executor.sell(symbol, 100.0)
+            if action == "BUY":
+                order_ratio = get_order_size_ratio_for_regime(market_regime)
+                result = self.coin_executor.buy(symbol, 100.0, order_size_ratio=order_ratio)
+            else:
+                result = self.coin_executor.sell(symbol, 100.0)
 
             if result:
                 update_cooldown(symbol, action)
@@ -379,14 +425,17 @@ class Orchestrator:
             logger.error(f"고아 포지션 처리 오류: {e}")
 
     async def run_coin_cycle(self):
+        await self._sync_runtime_watchlist()
         await self._cleanup_zombie_positions()
         await self._sell_orphaned_positions()
 
-        # BTC 기준 리스크오프 장세 판단
+        # BTC 기준 장세 판단
         bear_market = False
+        market_regime = "risk_on"
         try:
             btc_indicators = get_coin_indicators("KRW-BTC")
-            if self._is_risk_off_market(btc_indicators):
+            market_regime = get_market_regime(btc_indicators)
+            if is_risk_off_market(btc_indicators):
                 bear_market = True
                 logger.warning(
                     "리스크오프 감지: "
@@ -399,7 +448,13 @@ class Orchestrator:
             logger.error(f"BTC RSI 조회 실패: {e}")
 
         for item in get_watchlist("coin"):
-            await self.analyze_and_trade("coin", item["symbol"], item["name"] or item["symbol"], bear_market=bear_market)
+            await self.analyze_and_trade(
+                "coin",
+                item["symbol"],
+                item["name"] or item["symbol"],
+                bear_market=bear_market,
+                market_regime=market_regime,
+            )
 
     def start(self):
         import pytz

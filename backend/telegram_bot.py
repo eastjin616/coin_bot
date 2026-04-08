@@ -3,6 +3,7 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 from backend.config import get_settings
 from backend.database import get_db
+from backend.runtime_status import get_runtime_status
 
 logger = logging.getLogger(__name__)
 
@@ -227,6 +228,7 @@ async def _status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         executor = CoinExecutor()
         krw = executor.get_balance_krw()
+        runtime = get_runtime_status()
 
         lines = ["📊 실시간 현황\n"]
 
@@ -259,6 +261,16 @@ async def _status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             lines.append("📭 보유 중인 코인 없음")
 
+        regime_map = {"risk_off": "리스크오프", "caution": "주의", "risk_on": "리스크온"}
+        regime = regime_map.get(runtime["regime"], "리스크온")
+        lines.append(f"\n🧭 장세: {regime}")
+        lines.append(f"권장 매수 비중: {runtime['suggested_order_size_ratio'] * 100:.1f}%")
+        lines.append(f"허용 종목: {', '.join(sym.split('-')[1] for sym in runtime['buy_enabled_symbols'])}")
+        lines.append(
+            "최근 30일 실현손익: "
+            f"{runtime['recent_30d']['realized_pnl_krw']:+,.0f}원 "
+            f"(승률 {runtime['recent_30d']['win_rate']:.1f}%, 매도 {runtime['recent_30d']['sell_count']}회)"
+        )
         lines.append(f"\n💰 KRW 잔고: {krw:,.0f}원")
         await update.message.reply_text("\n".join(lines))
     except Exception as e:

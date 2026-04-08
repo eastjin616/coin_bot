@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.config import get_settings
 from backend.database import create_tables
 from backend.orchestrator import Orchestrator
-from backend.routers import trades, watchlist, signals, balance, test_trade, portfolio, chat
+from backend.routers import trades, watchlist, signals, balance, test_trade, portfolio, chat, runtime
 from backend.middleware.api_key_auth import APIKeyMiddleware
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -59,6 +59,7 @@ app.include_router(balance.router)
 app.include_router(test_trade.router)
 app.include_router(portfolio.router)
 app.include_router(chat.router)
+app.include_router(runtime.router)
 
 @app.get("/")
 def root():

@@ -44,16 +44,17 @@ class CoinExecutor:
         """시장가 매수 — 금액 직접 지정"""
         return self._execute_buy(symbol, confidence, amount_krw)
 
-    def buy(self, symbol: str, confidence: float) -> dict | None:
-        """시장가 매수. 잔고의 20% (최소 10,000원 / 최대 50,000원) 매수."""
+    def buy(self, symbol: str, confidence: float, order_size_ratio: float | None = None) -> dict | None:
+        """시장가 매수. 잔고 비율 기반 (최소 10,000원 / 최대 50,000원) 매수."""
         krw_balance = self.get_balance_krw()
         min_order = 10000
         max_order = 50000
-        order_amount = max(min_order, min(int(krw_balance * 0.2), max_order))
+        ratio = order_size_ratio if order_size_ratio is not None else self.settings.risk_on_order_size_ratio
+        order_amount = max(min_order, min(int(krw_balance * ratio), max_order))
         if krw_balance < min_order:
             logger.warning(f"잔고 부족: {krw_balance:.0f}원 (최소 {min_order:,}원 필요)")
             return None
-        logger.info(f"매수 금액 결정: {order_amount:,}원 (잔고 {krw_balance:,.0f}원의 20%)")
+        logger.info(f"매수 금액 결정: {order_amount:,}원 (잔고 {krw_balance:,.0f}원의 {ratio * 100:.1f}%)")
         return self._execute_buy(symbol, confidence, order_amount)
 
     def _execute_buy(self, symbol: str, confidence: float, order_amount: float) -> dict | None:

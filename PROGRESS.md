@@ -1,5 +1,82 @@
 # coin_bot 구현 현황
 
+## 2026-04-08: 운영 종목 자동 재선정 도구 + 장세별 포지션 사이징
+
+### 운영 종목 자동 재선정 도구 (`backtesting/reselect_runtime.py`)
+- 현실화 백테스트 + walk-forward + 최근 OOS 결과를 종합해서 runtime universe 후보를 다시 뽑는 스크립트 추가
+- 실행:
+  - `PYTHONPATH=. python -m backtesting.reselect_runtime`
+- 목적:
+  - `RUNTIME_SELECTION` 상수를 수동 감으로 고르지 않고, 리포트 기반으로 재선정
+
+### 장세별 포지션 사이징 (`backend/config.py`, `backend/execution/coin_executor.py`, `backend/orchestrator.py`)
+- 장세를 `risk_on / caution / risk_off` 3단계로 확장
+- 권장 매수 비중 설정 추가
+  - `risk_on_order_size_ratio=0.2`
+  - `caution_order_size_ratio=0.1`
+  - `risk_off_order_size_ratio=0.05`
+- 실제 매수 시 장세별 비중을 사용하도록 연결
+- 단, `risk_off`에서는 기존처럼 알트 신규 매수는 차단됨
+
+### 운영 사유 가시성 강화 (`backend/runtime_status.py`)
+- 각 종목별 `enabled`, `reason`, `realistic_return_pct`, `recent_oos_pct` 포함
+- `/api/runtime/status`에서 허용/제외 사유를 바로 확인 가능
+
+---
+
+## 2026-04-08: 보유 포지션 보호 + 운영 제외 종목 완화형 우선 청산
+
+### 보유 포지션 보호 (`backend/orchestrator.py`)
+- watchlist 자동 동기화가 현재 보유 포지션을 orphan으로 만들지 않도록 수정
+- active watchlist는 이제
+  - 런타임 신규 매수 허용 종목
+  - 현재 실제 보유 포지션
+  를 합친 집합으로 유지
+- 의미:
+  - 운영 제외 종목을 들고 있어도 즉시 orphan 매도로 쓸려나가지 않음
+  - 기존 포지션은 계속 관리되고, 출구 로직도 정상 유지
+
+### 운영 제외 종목 완화형 우선 청산 (`backend/orchestrator.py`)
+- 신규 매수는 여전히 차단
+- 이미 보유 중인 운영 제외 종목은 아래 조건에서 우선 청산
+  - 평가손익 `+1.0%` 이상 수익권 진입
+  - 또는 RSI가 약한 매도 구간 진입
+- 즉시 강제 청산 대신 “수익권 또는 약한 출구 신호에서 정리” 방식 채택
+
+### 테스트
+- held symbol watchlist 보존 테스트 추가
+- 운영 제외 종목 완화형 청산 기준 테스트 추가
+
+---
+
+## 2026-04-08: watchlist 자동 동기화 + 런타임 상태 노출
+
+### watchlist 자동 동기화 (`backend/orchestrator.py`, `backend/runtime_status.py`)
+- 런타임 허용 종목 집합을 `ACTIVE_BUY_SYMBOLS`로 단일화
+- 매 사이클 시작 시 DB watchlist를 런타임 허용 종목 기준으로 자동 동기화
+  - 허용 종목: `active = TRUE`
+  - 비허용 종목: `active = FALSE`
+- 의미:
+  - 코드상 운영 종목과 DB watchlist 상태가 계속 일치
+  - 운영자가 별도로 수동 정리하지 않아도 됨
+
+### 런타임 상태 API / 텔레그램 확장 (`backend/routers/runtime.py`, `backend/telegram_bot.py`)
+- 신규 API 추가: `/api/runtime/status`
+- 반환 정보:
+  - 현재 `risk_off` 여부
+  - BTC RSI / MA5 / MA20 / 현재가
+  - 신규 매수 허용 종목 목록
+  - 현재 active watchlist 목록
+  - 최근 30일 실현손익 / 승률 / 매도 횟수
+- 텔레그램 `/status`에도 장세, 허용 종목, 최근 30일 실현손익 추가
+
+### 테스트
+- runtime router 테스트 추가
+- watchlist 동기화 테스트 추가
+- 검증 결과: `PYTHONPATH=. pytest -q` 통과
+
+---
+
 ## 2026-04-08: 운영 대상 축소 + 레짐 필터 강화
 
 ### 운영 대상 축소 (`backend/orchestrator.py`)

@@ -49,6 +49,9 @@ class Settings(BaseSettings):
 
     # 리스크 관리
     order_size_ratio: float = 0.5
+    risk_on_order_size_ratio: float = 0.2
+    caution_order_size_ratio: float = 0.1
+    risk_off_order_size_ratio: float = 0.05
     stop_loss_percent: float = 5.0
     take_profit_percent: float = 10.0
 
