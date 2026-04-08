@@ -123,15 +123,20 @@ coin_bot/
 │   ├── orchestrator.py      # Core trading loop (RSI signals, risk mgmt)
 │   ├── config.py            # Settings via pydantic-settings
 │   ├── database.py          # PostgreSQL connection + schema
+│   ├── runtime_status.py    # Runtime universe / regime / performance status
 │   ├── telegram_bot.py      # Trade alerts + /balance /status commands
+│   ├── routers/
+│   │   └── runtime.py       # /api/runtime/status
 │   └── execution/
 │       └── coin_executor.py # Upbit order execution
 ├── backtesting/
 │   ├── optimize.py          # Grid search: RSI + trailing-stop/stop-loss
+│   ├── reselect_runtime.py  # Runtime universe reselection helper
 │   └── data/                # Cached OHLCV (gitignored)
 └── tests/
     ├── test_orchestrator.py
-    └── test_backtesting.py
+    ├── test_backtesting.py
+    └── test_runtime_router.py
 ```
 
 ---
@@ -146,6 +151,9 @@ python -m backtesting.optimize
 
 # Step 2: Optimize trailing-stop / stop-loss (locks in best RSI from step 1)
 python -m backtesting.optimize risk
+
+# Step 3: Recompute runtime universe recommendation
+python -m backtesting.reselect_runtime
 ```
 
 Grid search ranges:
@@ -228,6 +236,9 @@ For altcoins, `risk_off` still blocks new buys. The ratio is mainly relevant for
 ```bash
 PYTHONPATH=. pytest -q
 ```
+
+Current local regression status:
+- `33 passed`
 
 ---
 
