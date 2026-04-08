@@ -1,5 +1,115 @@
 # coin_bot 구현 현황
 
+## 2026-04-08: 운영 대상 축소 + 레짐 필터 강화
+
+### 운영 대상 축소 (`backend/orchestrator.py`)
+- 최근 현실화 백테스트/OOS 기준으로 신규 매수 허용 종목을 축소
+- 현재 신규 매수 허용:
+  - `KRW-SOL`
+  - `KRW-DOGE`
+  - `KRW-LINK`
+  - `KRW-HBAR`
+  - `KRW-UNI`
+  - `KRW-BCH`
+  - `KRW-BTC`는 예외적으로 유지
+- 의미:
+  - watchlist에 남아 있어도 비우호 성능 종목은 신규 진입 차단
+  - 기존 보유 포지션은 매도/정리 로직은 그대로 유지
+
+### 레짐 필터 강화 (`backend/orchestrator.py`)
+- 기존: `BTC RSI < 40` 단일 조건
+- 변경: 아래 3개 중 2개 이상 충족 시 리스크오프 판정
+  - BTC RSI < 45
+  - BTC `MA5 < MA20`
+  - BTC 현재가 < `MA20`
+- 리스크오프 장세에서는 BTC 제외 알트코인 신규 매수 차단
+- 효과:
+  - 횡보/약세장에서 매수 빈도 감소
+  - 비용 반영 후 edge가 약한 구간 진입 억제
+
+### 테스트/문서
+- 운영 제외 심볼 차단 테스트 추가
+- 리스크오프 판정 테스트 추가
+- README와 PROGRESS에 운영 대상 축소 / 강화된 레짐 필터 반영
+
+---
+
+## 2026-04-08: 비용 반영 백테스트 + Walk-Forward + 최근 OOS 검증
+
+### 현실화 백테스트 반영 (`backtesting/simulator.py`, `backtesting/optimize.py`, `backtesting/data_fetcher.py`)
+- 백테스터에 업비트 기준 보수적 비용 가정 추가
+  - 수수료: `0.05%`
+  - 슬리피지: `0.05%`
+- 매수/매도 체결가를 비용 반영 체결가로 계산하도록 수정
+- 보유 포지션 평가도 마지막 봉 종가가 아니라 비용 반영 청산가 기준으로 계산하도록 변경
+- `fetch_ohlcv(..., cache_only=True)` 지원 추가
+  - 최신 캐시 파일이 있으면 네트워크 없이도 연구 리포트 재실행 가능
+
+### Walk-Forward / 최근 OOS 검증 (`backtesting/optimize.py`)
+- 학습 구간 720일 / 검증 구간 180일 / 180일 step 기준 walk-forward 검증 추가
+- 최신 180일 구간 별도 OOS 성능 체크 추가
+- 전체 전수탐색 대신 실무형 2단계 탐색으로 조정
+  - 1단계: RSI 매수/매도 최적화
+  - 2단계: 트레일링 활성화% / 손절% 최적화
+- 캐시 데이터 기준 연구 명령:
+  - `PYTHONPATH=. python -m backtesting.optimize`
+
+### 현실화 백테스트 결과 요약 (캐시 데이터 기준)
+- 양수 유지: LINK `+21.2%`, BCH `+6.8%`, UNI `+5.3%`, HBAR `+4.2%`, DOGE `+3.7%`, SOL `+2.6%`
+- 거의 0 근처: SUI `+0.0%`, ICP `+0.2%`, ATOM `-0.3%`, TRX `-1.0%`, SHIB `-1.4%`
+- 음수 심화: BTC `-10.1%`, ADA `-5.7%`, DOT `-4.7%`, AVAX `-3.4%`
+- 의미:
+  - 비용 반영 후에도 일부 코인만 확실한 edge 유지
+  - 기존 “전부 양수처럼 보이던” 기대수익은 보수적으로 재평가됨
+
+### Walk-Forward / 최근 OOS 해석
+- Walk-forward 평균 OOS가 일관되게 강한 코인은 많지 않음
+- 최근 180일 OOS에서는 BCH `-1.0%`, LINK `-2.5%`, SOL `-4.8%`, BTC `-3.5%` 등으로 최근장 적응력이 약한 편
+- DOGE `+0.1%`, DOT `+0.4%` 정도만 최근 구간 방어
+- 결론:
+  - 현재 전략은 “장기 인샘플 최적화” 대비 “최근 실전 적응력”이 강하지 않음
+  - 다음 단계는 신규 파라미터 추가보다 레짐 필터, 거래 빈도 축소, 코인 셀렉션 축소가 우선
+
+### 운영 파라미터 재산출 반영 (`backend/orchestrator.py`)
+- `_RSI_OVERRIDES`를 비용 반영 백테스트 기준으로 재산출
+- `_PROFIT_STOP_OVERRIDES`를 `(trailing_activation_percent, stop_loss_percent)` 구조로 재정의
+- 런타임 트레일링 활성화 조건도 코인별 activation 값을 직접 사용하도록 수정
+- LINK는 `+5.0%` 활성화 / `-5%` 손절 조합이 가장 우수하게 확인됨
+
+---
+
+## 2026-04-08: 백테스터-실운영 정합성 확보 + AI 분리 + 테스트 체계 정리
+
+### 백테스터 실운영 정합성 확보 (`backtesting/simulator.py`, `backtesting/optimize.py`)
+- 백테스터에 `use_trailing_stop` 옵션 추가
+- 실운영과 동일한 트레일링 스탑 규칙 반영
+  - 손절: `entry_price` 기준 `-stop_loss%`
+  - 트레일링 활성화: `highest_price >= entry_price × (1 + stop_loss/200)`
+  - 트레일링 발동: `current_price <= highest_price × (1 - stop_loss/100)`
+- `python -m backtesting.optimize`와 `python -m backtesting.optimize risk`가 기본적으로 트레일링 기준 결과를 계산하도록 변경
+- 짧은 샘플/비정상 데이터로 `df.empty`가 되는 경우에도 백테스터가 예외 없이 종료되도록 방어 로직 추가
+
+### 거래 코어와 AI/chat 결합도 완화 (`backend/routers/chat.py`, `backend/ai/chat_agent.py`, `backend/ai/chart_generator.py`)
+- `/chat` 요청 시점에만 AI agent import 하도록 변경
+- `langchain_groq`, `langchain` 관련 import를 `ask_agent()` 내부로 이동
+- `mplfinance`, `yfinance` import를 실제 차트 생성 함수 내부로 이동
+- 결과: FastAPI 앱 import 시 AI/차트 의존성 때문에 서버 전체가 죽는 구조 제거
+- 로컬 검증 기준 `from backend.main import app` 정상 통과 확인
+
+### 테스트 체계 정리 (`pytest.ini`, `backend/routers/test_trade.py`, `tests/`)
+- `pytest.ini` 추가: 테스트 수집 경로를 `tests/`로 고정
+- `backend/routers/test_trade.py`에 `__test__ = False` 추가해 라우터 파일이 테스트로 오인 수집되지 않도록 수정
+- 예전 AI 기반 오케스트레이터 테스트를 현재 RSI/포지션 기반 신호 테스트로 교체
+- 트레일링 스탑 백테스터 회귀 테스트 추가
+- 검증 결과: `PYTHONPATH=. pytest -q` → `23 passed`
+
+### 다음 고도화 후보
+- 수수료/슬리피지 백테스터 반영
+- walk-forward / 구간별 OOS 검증 추가
+- `_PROFIT_STOP_OVERRIDES` 재산출 후 운영 파라미터 재동기화
+
+---
+
 ## 2026-04-05: 트레일링 스탑 도입 (고정 익절 제거)
 
 ### 변경 내용 (`orchestrator.py`, `coin_executor.py`, `database.py`)

@@ -1,5 +1,3 @@
-import yfinance as yf
-import mplfinance as mpf
 import os
 from datetime import datetime
 import pyupbit
@@ -8,6 +6,9 @@ import pandas as pd
 
 def generate_stock_chart(symbol: str, output_dir: str = "/tmp/charts") -> str:
     """주식 차트 이미지 생성. 반환값: 이미지 파일 경로"""
+    import yfinance as yf
+    import mplfinance as mpf
+
     os.makedirs(output_dir, exist_ok=True)
     ticker = yf.Ticker(symbol)
     df = ticker.history(period="5d", interval="1h")
@@ -20,6 +21,8 @@ def generate_stock_chart(symbol: str, output_dir: str = "/tmp/charts") -> str:
 
 def generate_coin_chart(symbol: str, output_dir: str = "/tmp/charts") -> str:
     """코인 차트 이미지 생성. 반환값: 이미지 파일 경로"""
+    import mplfinance as mpf
+
     os.makedirs(output_dir, exist_ok=True)
     df = pyupbit.get_ohlcv(symbol, interval="minute60", count=120)
     if df is None or df.empty:

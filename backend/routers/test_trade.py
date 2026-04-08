@@ -1,6 +1,8 @@
 from fastapi import APIRouter
 from backend.execution.coin_executor import CoinExecutor
 
+__test__ = False
+
 router = APIRouter(prefix="/api/test", tags=["test"])
 
 @router.post("/buy/{symbol}")

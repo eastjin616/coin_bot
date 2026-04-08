@@ -1,9 +1,5 @@
 # backend/ai/chat_agent.py
 import logging
-from langchain_groq import ChatGroq
-from langchain.agents import create_tool_calling_agent, AgentExecutor
-from langchain_core.prompts import ChatPromptTemplate
-from backend.ai.agent_tools import get_portfolio_tool, get_trade_history_tool, get_market_signal_tool
 from backend.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -20,6 +16,11 @@ MODELS = [
 ]
 
 def ask_agent(message: str) -> str:
+    from langchain_groq import ChatGroq
+    from langchain.agents import create_tool_calling_agent, AgentExecutor
+    from langchain_core.prompts import ChatPromptTemplate
+    from backend.ai.agent_tools import get_portfolio_tool, get_trade_history_tool, get_market_signal_tool
+
     settings = get_settings()
     if not settings.groq_api_key:
         return "Groq API 키가 설정되지 않았습니다."

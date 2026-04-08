@@ -2,7 +2,6 @@
 import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, field_validator
-from backend.ai.chat_agent import ask_agent
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +20,7 @@ class ChatRequest(BaseModel):
 @router.post("/chat")
 def chat(req: ChatRequest):
     try:
+        from backend.ai.chat_agent import ask_agent
         answer = ask_agent(req.message)
     except Exception as e:
         logger.error(f"Agent 실행 오류: {e}")

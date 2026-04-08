@@ -56,37 +56,79 @@ class Orchestrator:
         self._error_counts: dict[str, int] = {}  # 연속 오류 카운터
         self._last_balance_alert_at: datetime | None = None  # 잔고 부족 알림 마지막 전송 시각
 
-    # 백테스팅 기반 코인별 RSI 임계값 오버라이드 (일봉 ~8년치 그리드서치)
+    # 현실화 백테스팅 기반 코인별 RSI 임계값 오버라이드
+    # 가정: 수수료 0.05%, 슬리피지 0.05%, 트레일링 스탑 반영
     _RSI_OVERRIDES: dict[str, tuple[float, float]] = {
-        "KRW-BTC":  (50, 65),  # +2.6%
-        "KRW-LINK": (50, 70),  # +30.5%
-        "KRW-HBAR": (45, 70),  # +13.2%
-        "KRW-BCH":  (40, 60),  # +17.0%
-        "KRW-ATOM": (45, 60),  # +10.3%
-        "KRW-AVAX": (45, 70),  # +4.5%
-        "KRW-SUI":  (50, 70),  # +7.3%
-        "KRW-UNI":  (50, 65),  # +5.3%
-        "KRW-SHIB": (50, 60),  # +6.0%
+        "KRW-BTC":  (50, 65),  # -10.1%
+        "KRW-SOL":  (35, 70),  # +2.6%
+        "KRW-DOGE": (35, 55),  # +3.7%
+        "KRW-DOT":  (35, 55),  # -4.7%
+        "KRW-ADA":  (35, 55),  # -5.7%
+        "KRW-AVAX": (35, 55),  # -3.4%
+        "KRW-LINK": (50, 70),  # +21.2%
+        "KRW-TRX":  (35, 55),  # -1.0%
+        "KRW-SUI":  (45, 70),  # +0.0%
+        "KRW-HBAR": (40, 70),  # +4.2%
+        "KRW-ICP":  (35, 55),  # +0.2%
+        "KRW-ATOM": (45, 60),  # -0.3%
+        "KRW-UNI":  (50, 70),  # +5.3%
+        "KRW-SHIB": (50, 60),  # -1.4%
+        "KRW-BCH":  (40, 60),  # +6.8%
     }
 
-    # 백테스팅 기반 코인별 익절/손절 오버라이드 (take_profit%, stop_loss%)
+    # 현실화 백테스팅 기반 코인별 트레일링 활성화/손절 오버라이드
+    # 값: (trailing_activation_percent, stop_loss_percent)
     _PROFIT_STOP_OVERRIDES: dict[str, tuple[float, float]] = {
-        "KRW-BTC":  (5,  3),   # +3.5%
-        "KRW-SOL":  (10, 3),   # +5.7%
-        "KRW-DOGE": (5,  5),   # +8.9%
-        "KRW-DOT":  (5,  3),   # +0.9%
-        "KRW-ADA":  (5,  3),   # +3.1%
-        "KRW-AVAX": (8,  5),   # +5.8%
-        "KRW-LINK": (15, 10),  # +33.0%
-        "KRW-TRX":  (5,  10),  # +4.8%
-        "KRW-SUI":  (15, 5),   # +8.0%
-        "KRW-HBAR": (20, 5),   # +17.9%
-        "KRW-ICP":  (5,  3),   # +0.3%
-        "KRW-ATOM": (15, 5),   # +11.5%
-        "KRW-UNI":  (25, 3),   # +6.4%
-        "KRW-SHIB": (8,  5),   # +6.3%
-        "KRW-BCH":  (15, 3),   # +18.0%
+        "KRW-BTC":  (1.5, 3),   # -10.1%
+        "KRW-SOL":  (1.5, 3),   # +2.6%
+        "KRW-DOGE": (1.5, 5),   # +3.7%
+        "KRW-DOT":  (1.5, 3),   # -4.7%
+        "KRW-ADA":  (1.5, 3),   # -5.7%
+        "KRW-AVAX": (1.5, 3),   # -3.4%
+        "KRW-LINK": (5.0, 5),   # +21.2%
+        "KRW-TRX":  (1.5, 10),  # -1.0%
+        "KRW-SUI":  (1.5, 3),   # +0.0%
+        "KRW-HBAR": (1.5, 5),   # +4.2%
+        "KRW-ICP":  (1.5, 3),   # +0.2%
+        "KRW-ATOM": (1.5, 5),   # -0.3%
+        "KRW-UNI":  (1.5, 7),   # +5.3%
+        "KRW-SHIB": (1.5, 5),   # -1.4%
+        "KRW-BCH":  (1.5, 5),   # +6.8%
     }
+
+    # 최근 현실화 백테스트/OOS 기준으로 운영 매수 허용 종목만 유지
+    _ACTIVE_BUY_SYMBOLS: set[str] = {
+        "KRW-SOL",
+        "KRW-DOGE",
+        "KRW-LINK",
+        "KRW-HBAR",
+        "KRW-UNI",
+        "KRW-BCH",
+    }
+
+    def _is_buy_enabled_symbol(self, symbol: str) -> bool:
+        return symbol in self._ACTIVE_BUY_SYMBOLS or symbol == "KRW-BTC"
+
+    def _is_risk_off_market(self, indicators: dict) -> bool:
+        """BTC 기준 리스크오프 장세 판별.
+        조건 중 2개 이상 충족 시 알트코인 매수 차단:
+        - RSI < 45
+        - MA5 < MA20
+        - 현재가 < MA20
+        """
+        rsi = indicators.get("rsi", 50)
+        ma5 = indicators.get("ma5", 0)
+        ma20 = indicators.get("ma20", 0)
+        current_price = indicators.get("current_price", 0)
+
+        signals = 0
+        if rsi < 45:
+            signals += 1
+        if ma5 and ma20 and ma5 < ma20:
+            signals += 1
+        if current_price and ma20 and current_price < ma20:
+            signals += 1
+        return signals >= 2
 
     def _has_position(self, symbol: str) -> bool:
         """DB에 해당 코인 포지션이 있는지 확인"""
@@ -147,9 +189,9 @@ class Orchestrator:
             if not current_price:
                 return None
 
-            _, stop_loss = self._PROFIT_STOP_OVERRIDES.get(
+            trailing_activation, stop_loss = self._PROFIT_STOP_OVERRIDES.get(
                 symbol,
-                (self.settings.take_profit_percent, self.settings.stop_loss_percent)
+                (self.settings.stop_loss_percent / 2, self.settings.stop_loss_percent)
             )
 
             # 1. 손절: entry_price 기준
@@ -174,9 +216,9 @@ class Orchestrator:
                 return None
 
             # 3. 트레일링 스탑: 활성화 조건 충족 시에만
-            # 활성화: highest_price >= entry_price * (1 + stop_loss/200)
+            # 활성화: highest_price >= entry_price * (1 + trailing_activation/100)
             # 발동: current_price <= highest_price * (1 - stop_loss/100)
-            activation_threshold = entry_price * (1 + stop_loss / 200)
+            activation_threshold = entry_price * (1 + trailing_activation / 100)
             if highest_price >= activation_threshold:
                 trailing_trigger = highest_price * (1 - stop_loss / 100)
                 if current_price <= trailing_trigger:
@@ -239,16 +281,21 @@ class Orchestrator:
                 logger.debug(f"포지션 보유 중 — 재매수 차단: {symbol}")
                 return
 
-            # 5. 하락장 필터 — BTC RSI < 40이면 알트코인 매수 차단
+            # 5. 운영 제외 심볼은 신규 매수 차단
+            if action == "BUY" and not self._is_buy_enabled_symbol(symbol):
+                logger.info(f"운영 제외 심볼 매수 차단: {symbol}")
+                return
+
+            # 6. 하락장 필터 — BTC 리스크오프 장세면 알트코인 매수 차단
             if action == "BUY" and bear_market and symbol != "KRW-BTC":
-                logger.info(f"하락장 필터: {symbol} 매수 차단 (BTC RSI 기준 하락장)")
+                logger.info(f"하락장 필터: {symbol} 매수 차단 (BTC 리스크오프)")
                 return
 
             if is_on_cooldown(symbol, action, self.settings.cooldown_minutes):
                 logger.debug(f"쿨다운 중: {symbol} {action}")
                 return
 
-            # 5. 실행
+            # 7. 실행
             if action == "BUY":
                 krw_balance = self.coin_executor.get_balance_krw()
                 if krw_balance < 10000:
@@ -335,14 +382,19 @@ class Orchestrator:
         await self._cleanup_zombie_positions()
         await self._sell_orphaned_positions()
 
-        # BTC RSI로 하락장 여부 판단
+        # BTC 기준 리스크오프 장세 판단
         bear_market = False
         try:
             btc_indicators = get_coin_indicators("KRW-BTC")
-            btc_rsi = btc_indicators.get("rsi", 50)
-            if btc_rsi < 40:
+            if self._is_risk_off_market(btc_indicators):
                 bear_market = True
-                logger.warning(f"하락장 감지: BTC RSI={btc_rsi:.1f} < 40 — 알트코인 매수 차단")
+                logger.warning(
+                    "리스크오프 감지: "
+                    f"BTC RSI={btc_indicators.get('rsi', 50):.1f}, "
+                    f"MA5={btc_indicators.get('ma5', 0):.0f}, "
+                    f"MA20={btc_indicators.get('ma20', 0):.0f} "
+                    "— 알트코인 매수 차단"
+                )
         except Exception as e:
             logger.error(f"BTC RSI 조회 실패: {e}")
 

@@ -1,6 +1,6 @@
 # coin_bot 🤖
 
-> Automated crypto trading bot on Upbit — Daily RSI strategy with per-coin optimized parameters via 8-year backtesting
+> Automated crypto trading bot on Upbit — Daily RSI strategy with per-coin optimized parameters and trailing-stop validation via 8-year backtesting
 
 ![Python](https://img.shields.io/badge/Python-3.13-blue?logo=python)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115-green?logo=fastapi)
@@ -12,12 +12,14 @@
 
 ## Overview
 
-A fully automated cryptocurrency trading bot that runs 24/7 on AWS EC2. It monitors 15 coins every 60 seconds on Upbit (Korean exchange), executes buy/sell orders based on RSI signals, and manages risk with per-coin take-profit/stop-loss thresholds — all optimized via 8 years of historical backtesting.
+A fully automated cryptocurrency trading bot that runs 24/7 on AWS EC2. It monitors 15 coins every 60 seconds on Upbit (Korean exchange), executes buy/sell orders based on RSI signals, and manages risk with per-coin trailing-stop/stop-loss thresholds validated via historical backtesting.
 
 **Key highlights:**
 - RSI-based entry/exit strategy optimized per coin via grid search backtesting
-- Bear market filter: blocks altcoin buys when BTC RSI < 40
+- Regime filter: blocks altcoin buys when BTC shows multiple bearish signals
 - Dynamic position sizing: 20% of available balance (min ₩10,000 / max ₩50,000)
+- Trailing-stop risk management aligned between runtime and backtester
+- Runtime buy universe narrowed to coins with relatively better realistic/OOS performance
 - Telegram bot for real-time trade alerts and portfolio status
 - Zombie position cleanup: auto-detects and removes stale DB entries
 
@@ -35,7 +37,7 @@ A fully automated cryptocurrency trading bot that runs 24/7 on AWS EC2. It monit
 │  │                                                  │   │
 │  │  ① BTC RSI check → bear market filter           │   │
 │  │  ② Per-coin RSI signal (BUY / SELL / HOLD)      │   │
-│  │  ③ Take-profit / Stop-loss check                │   │
+│  │  ③ Trailing-stop / Stop-loss check              │   │
 │  │  ④ Zombie position cleanup                      │   │
 │  └──────────┬───────────────────┬───────────────────┘   │
 │             │                   │                        │
@@ -61,37 +63,40 @@ Pure RSI strategy on daily candles. No AI, no external signals — just technica
 ```
 Every 60 seconds:
   ↓
-BTC RSI < 40? → Block all altcoin buys (bear market filter)
+BTC risk-off regime? → Block all altcoin buys
   ↓
 RSI < buy_threshold  → BUY  (20% of balance, ₩10K–₩50K)
 RSI > sell_threshold → SELL
   ↓
-Real-time take-profit / stop-loss check (per-coin values)
+Real-time trailing-stop / stop-loss check (per-coin values)
 ```
 
 ---
 
 ## Per-coin Optimized Parameters
 
-Parameters tuned via 8-year grid search (2017–2025) on Upbit daily OHLCV data.
+Parameters tuned via cached daily OHLCV data with conservative assumptions:
+- Fee: `0.05%`
+- Slippage: `0.05%`
+- Validation: in-sample optimization + walk-forward + recent 180-day OOS check
 
-| Coin | RSI Buy | RSI Sell | Take Profit | Stop Loss | Backtest Return |
-|------|---------|----------|-------------|-----------|-----------------|
-| BTC  | 50 | 65 | +5%  | -3%  | +3.5%  |
-| SOL  | 35 | 55 | +10% | -3%  | +5.7%  |
-| DOGE | 35 | 55 | +5%  | -5%  | +8.9%  |
-| DOT  | 35 | 55 | +5%  | -3%  | +0.9%  |
-| ADA  | 35 | 55 | +5%  | -3%  | +3.1%  |
-| AVAX | 45 | 70 | +8%  | -5%  | +5.8%  |
-| LINK | 50 | 70 | +15% | -10% | +33.0% |
-| TRX  | 35 | 55 | +5%  | -10% | +4.8%  |
-| SUI  | 50 | 70 | +15% | -5%  | +8.0%  |
-| HBAR | 45 | 70 | +20% | -5%  | +17.9% |
-| ICP  | 35 | 55 | +5%  | -3%  | +0.3%  |
-| ATOM | 45 | 60 | +15% | -5%  | +11.5% |
-| UNI  | 50 | 65 | +25% | -3%  | +6.4%  |
-| SHIB | 50 | 60 | +8%  | -5%  | +6.3%  |
-| BCH  | 40 | 60 | +15% | -3%  | +18.0% |
+| Coin | RSI Buy | RSI Sell | Trailing Activation | Stop Loss | Realistic Return |
+|------|---------|----------|---------------------|-----------|------------------|
+| BTC  | 50 | 65 | +1.5% | -3%  | -10.1% |
+| SOL  | 35 | 70 | +1.5% | -3%  | +2.6%  |
+| DOGE | 35 | 55 | +1.5% | -5%  | +3.7%  |
+| DOT  | 35 | 55 | +1.5% | -3%  | -4.7%  |
+| ADA  | 35 | 55 | +1.5% | -3%  | -5.7%  |
+| AVAX | 35 | 55 | +1.5% | -3%  | -3.4%  |
+| LINK | 50 | 70 | +5.0% | -5%  | +21.2% |
+| TRX  | 35 | 55 | +1.5% | -10% | -1.0%  |
+| SUI  | 45 | 70 | +1.5% | -3%  | +0.0%  |
+| HBAR | 40 | 70 | +1.5% | -5%  | +4.2%  |
+| ICP  | 35 | 55 | +1.5% | -3%  | +0.2%  |
+| ATOM | 45 | 60 | +1.5% | -5%  | -0.3%  |
+| UNI  | 50 | 70 | +1.5% | -7%  | +5.3%  |
+| SHIB | 50 | 60 | +1.5% | -5%  | -1.4%  |
+| BCH  | 40 | 60 | +1.5% | -5%  | +6.8%  |
 
 > ETH, XRP, NEAR, OP excluded — negative backtest returns
 
@@ -122,10 +127,11 @@ coin_bot/
 │   └── execution/
 │       └── coin_executor.py # Upbit order execution
 ├── backtesting/
-│   ├── optimize.py          # Grid search: RSI + take-profit/stop-loss
+│   ├── optimize.py          # Grid search: RSI + trailing-stop/stop-loss
 │   └── data/                # Cached OHLCV (gitignored)
 └── tests/
-    └── test_orchestrator.py
+    ├── test_orchestrator.py
+    └── test_backtesting.py
 ```
 
 ---
@@ -138,15 +144,54 @@ Downloads 8 years of daily OHLCV from Upbit and runs grid search to find optimal
 # Step 1: Optimize RSI buy/sell thresholds
 python -m backtesting.optimize
 
-# Step 2: Optimize take-profit / stop-loss (locks in best RSI from step 1)
+# Step 2: Optimize trailing-stop / stop-loss (locks in best RSI from step 1)
 python -m backtesting.optimize risk
 ```
 
 Grid search ranges:
 - RSI buy: `[30, 35, 40, 45, 50]`
 - RSI sell: `[55, 60, 65, 70]`
-- Take profit: `[5%, 8%, 10%, 15%, 20%, 25%]`
 - Stop loss: `[3%, 5%, 7%, 10%]`
+- Trailing activation: `[1.5%, 2.5%, 3.5%, 5.0%]`
+- Walk-forward: `train=720d`, `test=180d`, `step=180d`
+
+## Recent OOS Snapshot
+
+Cached-data recent 180-day OOS results were mostly flat-to-negative:
+- DOGE `+0.1%`
+- DOT `+0.4%`
+- BCH `-1.0%`
+- LINK `-2.5%`
+- BTC `-3.5%`
+- SOL `-4.8%`
+
+This means the strategy is not yet robust enough to claim a strong recent live edge across the full watchlist.
+
+## Runtime Universe
+
+Current new-buy runtime universe is intentionally narrower than the stored watchlist:
+- `KRW-BTC`
+- `KRW-SOL`
+- `KRW-DOGE`
+- `KRW-LINK`
+- `KRW-HBAR`
+- `KRW-UNI`
+- `KRW-BCH`
+
+Other coins may remain in the DB/watchlist for monitoring or position cleanup, but new entries are blocked at runtime.
+
+## Regime Filter
+
+Altcoin buys are blocked when BTC shows at least 2 of the following 3 bearish conditions:
+- RSI `< 45`
+- `MA5 < MA20`
+- Current price `< MA20`
+
+## Testing
+
+```bash
+PYTHONPATH=. pytest -q
+```
 
 ---
 

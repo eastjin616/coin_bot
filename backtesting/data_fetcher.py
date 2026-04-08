@@ -7,18 +7,38 @@ from pathlib import Path
 DATA_DIR = Path(__file__).parent / "data"
 
 
-def fetch_ohlcv(symbol: str, interval: str = "minute15", count: int = 200) -> pd.DataFrame:
+def _latest_cache_file(symbol: str, interval: str, count: int) -> Path | None:
+    pattern = f"{symbol.replace('-', '_')}_{interval}_{count}_*.csv"
+    matches = sorted(DATA_DIR.glob(pattern))
+    return matches[-1] if matches else None
+
+
+def fetch_ohlcv(symbol: str, interval: str = "minute15", count: int = 200, cache_only: bool = False) -> pd.DataFrame:
     """업비트에서 OHLCV 데이터 크롤링. count일치 데이터 반환.
     캐시: 같은 날 1시간 이내 재요청 시 파일 재사용.
     """
     DATA_DIR.mkdir(exist_ok=True)
     today = date.today().isoformat()
     cache_file = DATA_DIR / f"{symbol.replace('-', '_')}_{interval}_{count}_{today}.csv"
+    latest_cache = _latest_cache_file(symbol, interval, count)
 
     if cache_file.exists():
         mtime = cache_file.stat().st_mtime
         if (time.time() - mtime) < 3600:
             return pd.read_csv(cache_file, index_col=0, parse_dates=True)
+
+    if latest_cache and latest_cache.exists():
+        if cache_only:
+            return pd.read_csv(latest_cache, index_col=0, parse_dates=True)
+        mtime = latest_cache.stat().st_mtime
+        if (time.time() - mtime) >= 3600:
+            try:
+                return pd.read_csv(latest_cache, index_col=0, parse_dates=True)
+            except Exception:
+                pass
+
+    if cache_only:
+        return pd.DataFrame()
 
     candles_per_day = {"minute15": 96, "minute60": 24, "day": 1}.get(interval, 96)
     candles_needed = count * candles_per_day
