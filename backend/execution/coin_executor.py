@@ -1,4 +1,6 @@
 import logging
+import time
+
 import pyupbit
 from backend.config import get_settings
 from backend.database import get_db
@@ -18,6 +20,62 @@ class CoinExecutor:
             self.upbit = None
             logger.warning("업비트 API 키 없음 — 모의 모드로 동작")
         self.settings = settings
+
+    def _submit_buy_with_retry(self, symbol: str, order_amount: float) -> dict | None:
+        last_err: Exception | None = None
+        for attempt in range(3):
+            try:
+                result = self.upbit.buy_market_order(symbol, order_amount)
+                if result and result.get("uuid"):
+                    return result
+                logger.warning("buy_market_order 빈 응답 (%s) %d/3", symbol, attempt + 1)
+            except Exception as e:
+                last_err = e
+                logger.warning("buy_market_order 예외 (%s) %d/3: %s", symbol, attempt + 1, e)
+            time.sleep(0.5 * (attempt + 1))
+        if last_err:
+            logger.error("매수 주문 실패(3회): %s — %s", symbol, last_err)
+        return None
+
+    def _submit_sell_with_retry(self, symbol: str, volume: float) -> dict | None:
+        last_err: Exception | None = None
+        for attempt in range(3):
+            try:
+                result = self.upbit.sell_market_order(symbol, volume)
+                if result and result.get("uuid"):
+                    return result
+                logger.warning("sell_market_order 빈 응답 (%s) %d/3", symbol, attempt + 1)
+            except Exception as e:
+                last_err = e
+                logger.warning("sell_market_order 예외 (%s) %d/3: %s", symbol, attempt + 1, e)
+            time.sleep(0.5 * (attempt + 1))
+        if last_err:
+            logger.error("매도 주문 실패(3회): %s — %s", symbol, last_err)
+        return None
+
+    def _fetch_order_detail(self, order_uuid: str) -> dict | None:
+        """시장가 체결 확인 — get_order 일시 실패·지연 대비 재시도."""
+        delays = (0.4, 0.5, 0.6, 1.0, 1.5, 2.0, 2.5, 3.0, 3.0, 3.0)
+        last: dict | None = None
+        for i, delay in enumerate(delays):
+            if i > 0:
+                time.sleep(delay)
+            try:
+                last = self.upbit.get_order(order_uuid)
+            except Exception as e:
+                logger.warning("get_order 재시도 %d/%d (%s): %s", i + 1, len(delays), order_uuid, e)
+                last = None
+                continue
+            if not last:
+                continue
+            if last.get("state") == "cancel":
+                logger.error("주문 취소됨: %s", order_uuid)
+                return None
+            vol = float(last.get("executed_volume") or 0)
+            if last.get("state") == "done" or vol > 0:
+                return last
+        logger.error("체결 조회 타임아웃: %s", order_uuid)
+        return None
 
     def get_balance_krw(self) -> float:
         """KRW 잔고 조회"""
@@ -47,10 +105,14 @@ class CoinExecutor:
     def buy(self, symbol: str, confidence: float, order_size_ratio: float | None = None) -> dict | None:
         """시장가 매수. 잔고 비율 기반 (최소 10,000원 / 최대 50,000원) 매수."""
         krw_balance = self.get_balance_krw()
-        min_order = 10000
-        max_order = 50000
+        min_order = self.settings.min_order_amount_krw
+        max_order = self.settings.max_order_amount_krw
         ratio = order_size_ratio if order_size_ratio is not None else self.settings.risk_on_order_size_ratio
-        order_amount = max(min_order, min(int(krw_balance * ratio), max_order))
+        raw_amount = int(krw_balance * ratio)
+        if max_order > 0:
+            order_amount = max(min_order, min(raw_amount, max_order))
+        else:
+            order_amount = max(min_order, raw_amount)
         if krw_balance < min_order:
             logger.warning(f"잔고 부족: {krw_balance:.0f}원 (최소 {min_order:,}원 필요)")
             return None
@@ -68,22 +130,21 @@ class CoinExecutor:
             return {"symbol": symbol, "action": "BUY", "amount": order_amount, "price": 0, "quantity": 0}
 
         try:
-            result = self.upbit.buy_market_order(symbol, order_amount)
-            if result and "uuid" in result:
-                # 체결 정보 조회
-                import time
-                time.sleep(0.5)
-                order_detail = self.upbit.get_order(result["uuid"])
-                # avg_price = 코인 단가, price = 주문 KRW 금액 (단가 아님)
-                quantity = float(order_detail.get("executed_volume") or 0)
-                price = float(order_detail.get("avg_price") or 0)
-                if price == 0 and quantity > 0:
-                    price = order_amount / quantity  # 직접 계산
+            result = self._submit_buy_with_retry(symbol, order_amount)
+            if not result or "uuid" not in result:
+                return None
+            order_detail = self._fetch_order_detail(result["uuid"])
+            if not order_detail:
+                return None
+            quantity = float(order_detail.get("executed_volume") or 0)
+            price = float(order_detail.get("avg_price") or 0)
+            if price == 0 and quantity > 0:
+                price = order_amount / quantity
 
-                self._save_trade(symbol, "BUY", confidence, price, quantity)
-                self._save_position(symbol, price, quantity)
-                logger.info(f"매수 완료: {symbol} {quantity:.6f} @ {price:.0f}원")
-                return {"symbol": symbol, "action": "BUY", "price": price, "quantity": quantity}
+            self._save_trade(symbol, "BUY", confidence, price, quantity)
+            self._save_position(symbol, price, quantity)
+            logger.info(f"매수 완료: {symbol} {quantity:.6f} @ {price:.0f}원")
+            return {"symbol": symbol, "action": "BUY", "price": price, "quantity": quantity}
         except Exception as e:
             logger.error(f"매수 실패: {e}")
         return None
@@ -121,11 +182,11 @@ class CoinExecutor:
             except Exception:
                 pass
 
-            result = self.upbit.sell_market_order(symbol, coin_balance)
+            result = self._submit_sell_with_retry(symbol, coin_balance)
             if result and "uuid" in result:
-                import time
-                time.sleep(0.5)
-                order_detail = self.upbit.get_order(result["uuid"])
+                order_detail = self._fetch_order_detail(result["uuid"])
+                if not order_detail:
+                    return None
                 price = float(order_detail.get("avg_price") or order_detail.get("price") or 0)
                 quantity = float(order_detail.get("executed_volume") or coin_balance)
                 if price == 0 and quantity > 0:

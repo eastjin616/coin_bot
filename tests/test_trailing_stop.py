@@ -1,4 +1,5 @@
 """트레일링 스탑 로직 단위 테스트"""
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 
@@ -13,6 +14,8 @@ def make_orchestrator():
         settings.take_profit_percent = 10.0
         settings.stop_loss_percent = 5.0
         settings.cooldown_minutes = 5
+        settings.max_hold_days = 10
+        settings.time_stop_min_pnl_pct = 0.0
         mock_settings.return_value = settings
         from backend.orchestrator import Orchestrator
         return Orchestrator()
@@ -109,14 +112,12 @@ class TestCheckProfitStop:
 
         assert result is None
 
-    # 케이스 5: LINK 코인별 오버라이드 — stop_loss=10%, 활성화 임계 +5%
-    # 주의: Orchestrator._PROFIT_STOP_OVERRIDES는 클래스 변수로 "KRW-LINK": (15, 10) 정의됨
-    # mock_settings의 stop_loss_percent=5.0 대신 오버라이드 값(10%) 이 사용되는지 검증
+    # 케이스 5: LINK — runtime_params.json 기준 트레일링 (활성화 5%, 손절폭 5%)
     def test_link_override_trailing_activation(self):
-        symbol = "KRW-LINK"  # _PROFIT_STOP_OVERRIDES에서 stop_loss=10%, 활성화: entry * 1.05
+        symbol = "KRW-LINK"
         entry_price = 20000.0
-        highest_price = 22000.0  # 22000 >= 21000 (20000*1.05) → 활성화 ✓
-        current_price = 19700.0  # 22000 * 0.9 = 19800 → 19700 <= 19800 ✓ 발동
+        highest_price = 22000.0  # 22000 >= 20000 * 1.05 → 활성화 ✓
+        current_price = 19700.0  # 22000 * 0.95 = 20900 → 19700 이하로 발동 ✓
 
         with patch("backend.orchestrator.get_db") as mock_get_db, \
              patch("pyupbit.get_current_price", return_value=current_price):
@@ -131,3 +132,22 @@ class TestCheckProfitStop:
             result = self.orc._check_profit_stop(symbol)
 
         assert result is not None and result[0] == "SELL" and result[1] == "trailing"
+
+    def test_time_stop_triggers_after_max_hold_days_without_profit(self):
+        symbol = "KRW-LINK"
+        opened_at = datetime.now(UTC) - timedelta(days=12)
+        signal_candle_time = datetime.now(UTC)
+
+        with patch("backend.orchestrator.get_db") as mock_get_db, \
+             patch("pyupbit.get_current_price", return_value=95.0):
+            mock_conn = MagicMock()
+            mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+            mock_conn.__exit__ = MagicMock(return_value=False)
+            mock_cur = MagicMock()
+            mock_cur.fetchone.return_value = {"entry_price": 100.0, "opened_at": opened_at}
+            mock_conn.cursor.return_value = mock_cur
+            mock_get_db.return_value = mock_conn
+
+            result = self.orc._check_time_stop(symbol, signal_candle_time)
+
+        assert result is not None and result[0] == "SELL" and result[1] == "timestop"

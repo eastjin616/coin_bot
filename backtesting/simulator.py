@@ -13,6 +13,8 @@ def run_backtest(
     stop_loss: float = 5.0,
     trailing_activation_percent: float | None = None,
     use_trailing_stop: bool = False,
+    max_hold_days: int | None = None,
+    time_stop_min_pnl_pct: float = 0.0,
     fee_rate: float = 0.0005,
     slippage_rate: float = 0.0005,
 ) -> dict:
@@ -36,6 +38,7 @@ def run_backtest(
     position = 0.0
     entry_price = 0.0
     highest_price = 0.0
+    holding_days = 0
     trades = []
     peak_value = cash
     min_drawdown = 0.0
@@ -52,11 +55,11 @@ def run_backtest(
     for ts, row in df.iterrows():
         price = row["close"]
         rsi = row["rsi"]
-        death = row["ma_fast"] < row["ma_slow"]
         trailing_activation = trailing_activation_percent if trailing_activation_percent is not None else stop_loss / 2
 
         # 손절 / 트레일링 스탑 / 고정 익절
         if position > 0 and entry_price > 0:
+            holding_days += 1
             if price > highest_price:
                 highest_price = price
 
@@ -69,6 +72,8 @@ def run_backtest(
             stop_reason = None
             if change_pct <= -stop_loss:
                 stop_reason = "손절"
+            elif max_hold_days is not None and max_hold_days > 0 and holding_days >= max_hold_days and change_pct < time_stop_min_pnl_pct:
+                stop_reason = "기간청산"
             elif use_trailing_stop and highest_price >= activation_threshold and price <= trailing_trigger:
                 stop_reason = "트레일링"
             elif not use_trailing_stop and change_pct >= take_profit:
@@ -84,6 +89,7 @@ def run_backtest(
                 position = 0.0
                 entry_price = 0.0
                 highest_price = 0.0
+                holding_days = 0
                 update_mdd(cash, position, price)
                 continue
 
@@ -95,21 +101,23 @@ def run_backtest(
             position += qty
             entry_price = buy_price
             highest_price = price
+            holding_days = 0
             trades.append({"type": "BUY", "price": buy_price, "ts": ts, "reason": "RSI"})
 
         # 매도
-        elif position > 0 and (rsi > rsi_sell or death):
+        elif position > 0 and rsi > rsi_sell:
             sell_price = price * (1 - slippage_rate)
             net_sell_price = sell_price * (1 - fee_rate)
             pnl_pct = (net_sell_price - entry_price) / entry_price * 100
             cash += position * net_sell_price
             trades.append({
                 "type": "SELL", "price": net_sell_price, "ts": ts,
-                "reason": "RSI/MA", "pnl_pct": pnl_pct,
+                "reason": "RSI", "pnl_pct": pnl_pct,
             })
             position = 0.0
             entry_price = 0.0
             highest_price = 0.0
+            holding_days = 0
 
         update_mdd(cash, position, price)
 

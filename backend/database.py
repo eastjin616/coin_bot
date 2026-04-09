@@ -82,6 +82,18 @@ def create_tables() -> None:
                 UPDATE positions SET highest_price = entry_price WHERE highest_price = 0 OR highest_price IS NULL;
             """)
 
+            # 일봉 신호 중복 실행 방지
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS signal_locks (
+                    market VARCHAR(10) NOT NULL,
+                    symbol VARCHAR(20) NOT NULL,
+                    action VARCHAR(4) NOT NULL,
+                    candle_time TIMESTAMP NOT NULL,
+                    updated_at TIMESTAMP DEFAULT NOW(),
+                    PRIMARY KEY (market, symbol, action)
+                );
+            """)
+
             # 기본 감시 종목 삽입 (이미 존재하면 무시)
             cur.execute("""
                 INSERT INTO watchlist (market, symbol, name)

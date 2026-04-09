@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     groq_api_key: str = ""
 
-    # 기술적 지표 전략 파라미터 (RSI + MA 크로스)
+    # 기술적 지표 전략 파라미터 (일봉 RSI 단독)
     rsi_buy_threshold: float = 35.0   # RSI 이하 → 매수 (일봉 백테스팅 최적값)
     rsi_sell_threshold: float = 55.0  # RSI 이상 → 매도 (일봉 백테스팅 최적값)
 
@@ -52,8 +52,26 @@ class Settings(BaseSettings):
     risk_on_order_size_ratio: float = 0.2
     caution_order_size_ratio: float = 0.1
     risk_off_order_size_ratio: float = 0.05
+    min_order_amount_krw: int = 10000
+    max_order_amount_krw: int = 50000
+    target_position_budget_krw: int = 50000
     stop_loss_percent: float = 5.0
     take_profit_percent: float = 10.0
+    max_hold_days: int = 10
+    time_stop_min_pnl_pct: float = 0.0
+    live_derating_enabled: bool = True
+    live_derating_lookback_days: int = 30
+    live_derating_min_sell_count: int = 3
+    live_derating_min_win_rate_pct: float = 40.0
+    live_derating_min_avg_pnl_pct: float = -0.5
+    loss_streak_cooldown_enabled: bool = True
+    loss_streak_threshold: int = 2
+    loss_streak_cooldown_days: int = 7
+    loss_streak_lookback_days: int = 30
+
+    # 운영 리스크 캡 (0이면 비활성화)
+    max_open_positions: int = 12
+    max_buys_per_day: int = 48
 
     # (미사용) 대시보드 인증 & CORS
     dashboard_api_key: str = ""

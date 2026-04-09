@@ -19,7 +19,7 @@ ACTIVE_RUNTIME_SYMBOLS = [
     "KRW-ICP", "KRW-ATOM", "KRW-UNI", "KRW-SHIB", "KRW-BCH",
 ]
 
-RSI_BUY_RANGE = [35, 40, 45, 50]
+RSI_BUY_RANGE = [30, 35, 40, 45, 50]
 RSI_SELL_RANGE = [55, 60, 65, 70]
 TRAILING_ACTIVATION_RANGE = [1.5, 2.5, 3.5, 5.0]
 STOP_LOSS_RANGE = [3, 5, 7, 10]
@@ -43,9 +43,9 @@ class StrategyParams:
     stop_loss: int
 
 
-def load_symbol_data(symbol: str) -> pd.DataFrame:
+def load_symbol_data(symbol: str, *, cache_only: bool = True) -> pd.DataFrame:
     print(f"\n📊 {symbol} 데이터 로딩 중...")
-    return fetch_ohlcv(symbol, interval=INTERVAL, count=DATA_DAYS, cache_only=True)
+    return fetch_ohlcv(symbol, interval=INTERVAL, count=DATA_DAYS, cache_only=cache_only)
 
 
 def score_result(result: dict) -> tuple[float, float, float]:
@@ -275,13 +275,13 @@ def print_recent_oos_report(results: list[dict]):
         )
 
 
-def run_research(symbols: list[str]) -> tuple[list[dict], list[dict], list[dict]]:
+def run_research(symbols: list[str], *, cache_only: bool = True) -> tuple[list[dict], list[dict], list[dict]]:
     full_results = []
     walk_summaries = []
     recent_oos_results = []
 
     for symbol in symbols:
-        df = load_symbol_data(symbol)
+        df = load_symbol_data(symbol, cache_only=cache_only)
         if df.empty:
             print(f"  데이터 없음: {symbol}")
             continue

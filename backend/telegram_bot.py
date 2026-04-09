@@ -7,6 +7,45 @@ from backend.runtime_status import get_runtime_status
 
 logger = logging.getLogger(__name__)
 
+
+def _format_signal_candle_label(iso_value: str | None) -> str:
+    if not iso_value:
+        return "확정 일봉 기준"
+    try:
+        dt = __import__("datetime").datetime.fromisoformat(iso_value)
+        return f"확정 일봉 기준 ({dt.strftime('%m-%d %H:%M')})"
+    except ValueError:
+        return "확정 일봉 기준"
+
+
+def _top_selection_summary(selection: list[dict], limit: int = 3) -> str:
+    rows = [row for row in selection if row.get("enabled")]
+    rows.sort(key=lambda row: float(row.get("effective_selection_score") or row.get("selection_score") or -999), reverse=True)
+    if not rows:
+        return "선정 종목 점수: 없음"
+    summary = ", ".join(
+        f"{row['symbol'].split('-')[1]} {float(row.get('effective_selection_score') or row.get('selection_score') or 0):+.1f}"
+        for row in rows[:limit]
+    )
+    return f"선정 점수: {summary}"
+
+
+def _blocked_selection_summary(selection: list[dict], limit: int = 3) -> str | None:
+    rows = [row for row in selection if not row.get("enabled")]
+    if not rows:
+        return None
+    rows.sort(
+        key=lambda row: (
+            0 if row.get("live_derated") else 1,
+            -(float(row.get("effective_selection_score") or row.get("selection_score") or -999)),
+        )
+    )
+    summary = ", ".join(
+        f"{row['symbol'].split('-')[1]} ({'live' if row.get('live_derated') else 'score'})"
+        for row in rows[:limit]
+    )
+    return f"제외 요약: {summary}"
+
 async def send_trade_alert(market: str, symbol: str, action: str, confidence: float, price: float, quantity: float, entry_price: float = 0, rsi: float = 0):
     settings = get_settings()
     if not settings.telegram_bot_token:
@@ -218,7 +257,7 @@ async def _status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         import pyupbit
-        from backend.ai.chart_generator import get_coin_indicators
+        from backend.ai.chart_generator import get_coin_signal_indicators
         from backend.execution.coin_executor import CoinExecutor
 
         with get_db() as conn:
@@ -240,7 +279,7 @@ async def _status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 entry = float(row["entry_price"])
                 qty = float(row["quantity"])
                 try:
-                    indicators = get_coin_indicators(symbol)
+                    indicators = get_coin_signal_indicators(symbol)
                     rsi = indicators.get("rsi", 0)
                     current = pyupbit.get_current_price(symbol) or entry
                 except Exception:
@@ -264,8 +303,21 @@ async def _status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         regime_map = {"risk_off": "리스크오프", "caution": "주의", "risk_on": "리스크온"}
         regime = regime_map.get(runtime["regime"], "리스크온")
         lines.append(f"\n🧭 장세: {regime}")
+        lines.append(_format_signal_candle_label(runtime.get("btc", {}).get("signal_candle_time")))
         lines.append(f"권장 매수 비중: {runtime['suggested_order_size_ratio'] * 100:.1f}%")
         lines.append(f"허용 종목: {', '.join(sym.split('-')[1] for sym in runtime['buy_enabled_symbols'])}")
+        lines.append(_top_selection_summary(runtime.get("selection", [])))
+        blocked_summary = _blocked_selection_summary(runtime.get("selection", []))
+        if blocked_summary:
+            lines.append(blocked_summary)
+        live_derated = runtime.get("live_derated_symbols", {})
+        if live_derated:
+            derated_labels = ", ".join(symbol.split("-")[1] for symbol in sorted(live_derated))
+            lines.append(f"실전 성과로 일시 제외: {derated_labels}")
+        streak_cooled = runtime.get("loss_streak_cooled_symbols", {})
+        if streak_cooled:
+            cooled_labels = ", ".join(symbol.split("-")[1] for symbol in sorted(streak_cooled))
+            lines.append(f"연속 손실 쿨다운: {cooled_labels}")
         lines.append(
             "최근 30일 실현손익: "
             f"{runtime['recent_30d']['realized_pnl_krw']:+,.0f}원 "

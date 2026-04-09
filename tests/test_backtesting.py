@@ -52,6 +52,41 @@ def test_fixed_take_profit_mode_keeps_legacy_behavior():
     assert sells[0]["reason"] == "익절"
 
 
+def test_backtest_does_not_sell_on_ma_cross_without_rsi_exit():
+    df = make_df([100, 95, 94, 93], [50, 30, 50, 50])
+    df["ma_fast"] = [100, 90, 80, 70]
+    df["ma_slow"] = [100, 100, 100, 100]
+    with patch("backtesting.simulator.add_indicators", return_value=df):
+        result = run_backtest(
+            df,
+            rsi_buy=40,
+            rsi_sell=90,
+            stop_loss=20,
+            use_trailing_stop=False,
+        )
+
+    sells = [trade for trade in result["trades"] if trade["type"] == "SELL"]
+    assert sells == []
+
+
+def test_time_stop_exits_after_max_hold_days_when_not_profitable():
+    df = make_df([100, 95, 95, 95], [50, 30, 40, 40])
+    with patch("backtesting.simulator.add_indicators", return_value=df):
+        result = run_backtest(
+            df,
+            rsi_buy=40,
+            rsi_sell=90,
+            stop_loss=20,
+            use_trailing_stop=False,
+            max_hold_days=2,
+            time_stop_min_pnl_pct=0.0,
+        )
+
+    sells = [trade for trade in result["trades"] if trade["type"] == "SELL"]
+    assert len(sells) == 1
+    assert sells[0]["reason"] == "기간청산"
+
+
 def test_fee_and_slippage_reduce_performance():
     df = make_df([100, 95, 120, 120], [50, 30, 50, 50])
     with patch("backtesting.simulator.add_indicators", return_value=df):
