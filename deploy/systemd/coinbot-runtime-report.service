@@ -1,0 +1,11 @@
+[Unit]
+Description=coin_bot runtime universe report generator
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/coin_bot
+Environment=PATH=/home/ubuntu/coin_bot/venv/bin
+ExecStart=/home/ubuntu/coin_bot/venv/bin/python -m backtesting.reselect_runtime --top-n 3 --write-report --allow-fetch --auto-apply-runtime --notify-telegram

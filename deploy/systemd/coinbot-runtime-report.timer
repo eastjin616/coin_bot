@@ -1,0 +1,10 @@
+[Unit]
+Description=Run coin_bot runtime universe report daily
+
+[Timer]
+OnCalendar=*-*-* 00:15:00 UTC
+Persistent=true
+Unit=coinbot-runtime-report.service
+
+[Install]
+WantedBy=timers.target
