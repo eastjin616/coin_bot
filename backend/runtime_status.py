@@ -9,6 +9,16 @@ from backend.runtime_params import get_active_buy_symbols, runtime_selection_met
 logger = logging.getLogger(__name__)
 
 
+def selection_state_label(meta: dict) -> str:
+    if meta.get("enabled"):
+        return "enabled"
+    if meta.get("loss_streak_cooled"):
+        return "streak-cooled"
+    if meta.get("live_derated"):
+        return "live-derated"
+    return "score-blocked"
+
+
 def count_bearish_signals(indicators: dict) -> int:
     rsi = indicators.get("rsi", 50)
     ma5 = indicators.get("ma5", 0)
@@ -97,6 +107,7 @@ def get_runtime_status() -> dict:
             "selection_score": meta.get("selection_score"),
             "live_score_adjustment": meta.get("live_score_adjustment"),
             "effective_selection_score": meta.get("effective_selection_score"),
+            "state_label": selection_state_label(meta),
         }
         for symbol, meta in sorted(run_meta.items())
     ]

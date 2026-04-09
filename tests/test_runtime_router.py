@@ -31,6 +31,7 @@ def test_runtime_status_returns_expected_shape():
                         "selection_score": 11.9,
                         "live_score_adjustment": 1.2,
                         "effective_selection_score": 13.1,
+                        "state_label": "enabled",
                     }
                 ],
                 "active_watchlist_symbols": ["KRW-BTC", "KRW-LINK"],
@@ -57,6 +58,7 @@ def test_runtime_status_returns_expected_shape():
     assert data["selection"][0]["effective_selection_score"] == 13.1
     assert data["selection"][0]["base_enabled"] is True
     assert data["selection"][0]["loss_streak_cooled"] is False
+    assert data["selection"][0]["state_label"] == "enabled"
     assert data["live_derated_symbols"]["KRW-ADA"].startswith("live-derated")
     assert data["loss_streak_cooled_symbols"]["KRW-BCH"].startswith("streak-cooled")
     assert data["recent_symbol_performance"]["KRW-LINK"]["sell_count"] == 3

@@ -46,6 +46,23 @@ def _blocked_selection_summary(selection: list[dict], limit: int = 3) -> str | N
     )
     return f"제외 요약: {summary}"
 
+
+def _stateboard_summary(selection: list[dict], limit: int = 5) -> str | None:
+    if not selection:
+        return None
+    rows = sorted(
+        selection,
+        key=lambda row: (
+            0 if row.get("state_label") == "enabled" else 1,
+            -(float(row.get("effective_selection_score") or row.get("selection_score") or -999)),
+        ),
+    )
+    summary = ", ".join(
+        f"{row['symbol'].split('-')[1]}={row.get('state_label')}"
+        for row in rows[:limit]
+    )
+    return f"상태판: {summary}"
+
 async def send_trade_alert(market: str, symbol: str, action: str, confidence: float, price: float, quantity: float, entry_price: float = 0, rsi: float = 0):
     settings = get_settings()
     if not settings.telegram_bot_token:
@@ -307,6 +324,9 @@ async def _status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append(f"권장 매수 비중: {runtime['suggested_order_size_ratio'] * 100:.1f}%")
         lines.append(f"허용 종목: {', '.join(sym.split('-')[1] for sym in runtime['buy_enabled_symbols'])}")
         lines.append(_top_selection_summary(runtime.get("selection", [])))
+        stateboard = _stateboard_summary(runtime.get("selection", []))
+        if stateboard:
+            lines.append(stateboard)
         blocked_summary = _blocked_selection_summary(runtime.get("selection", []))
         if blocked_summary:
             lines.append(blocked_summary)

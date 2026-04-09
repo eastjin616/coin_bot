@@ -76,6 +76,7 @@
 - 추가 개선:
   - `/status` 제외 요약에 `live` / `score` 태그 표시
   - 선발 점수는 `effective_selection_score` 기준으로 노출
+  - 종목별 `state_label` 기반 상태판 요약 추가
 
 ### 실전 피드백 점수 루프 (`backend/live_performance.py`, `backend/runtime_params.py`, `backend/orchestrator.py`)
 - 최근 실전 성과를 이진 차단만 하지 않고 **점수 보정치**로 환산
@@ -140,7 +141,7 @@
 - `.env.example`: 현재 설정 키 기준으로 정리 (`RISK_ON_*`, `TARGET_POSITION_BUDGET_KRW`, 주문 min/max 등)
 
 ### 테스트 / 검증
-- `PYTHONPATH=. pytest -q` → **64 passed**
+- `PYTHONPATH=. pytest -q` → **66 passed**
 - `python -m compileall backend backtesting tests` 통과
 
 ### EC2 배포

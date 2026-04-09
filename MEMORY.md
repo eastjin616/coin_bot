@@ -41,6 +41,7 @@
 - `/status`
   - 선발 종목은 `effective_selection_score`
   - 제외 종목은 `live` / `score` 이유 요약
+  - 상단 상태판으로 각 종목 상태 라벨 요약
 - `loss streak cooldown`
   - 최근 연속 손실 2회 이상이면 7일 신규매수 차단
   - runtime/API/텔레그램에 `loss_streak_cooled` 로 노출

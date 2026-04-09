@@ -1,4 +1,4 @@
-from backend.telegram_bot import _blocked_selection_summary, _format_signal_candle_label, _top_selection_summary
+from backend.telegram_bot import _blocked_selection_summary, _format_signal_candle_label, _stateboard_summary, _top_selection_summary
 
 
 def test_format_signal_candle_label_includes_timestamp():
@@ -28,3 +28,12 @@ def test_blocked_selection_summary_prioritizes_live_derated_symbols():
         {"symbol": "KRW-SOL", "enabled": False, "live_derated": False, "effective_selection_score": 4.0},
     ])
     assert summary == "제외 요약: LINK (live), TRX (score), SOL (score)"
+
+
+def test_stateboard_summary_renders_symbol_states():
+    summary = _stateboard_summary([
+        {"symbol": "KRW-BCH", "state_label": "enabled", "effective_selection_score": 17.8},
+        {"symbol": "KRW-LINK", "state_label": "live-derated", "effective_selection_score": 13.1},
+        {"symbol": "KRW-TRX", "state_label": "score-blocked", "effective_selection_score": 7.3},
+    ])
+    assert summary == "상태판: BCH=enabled, LINK=live-derated, TRX=score-blocked"

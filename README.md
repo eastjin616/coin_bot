@@ -275,6 +275,7 @@ The runtime status includes:
 - 종목별 `selection_score`, `base_enabled`, `live_derated`
 - 종목별 `live_score_adjustment`, `effective_selection_score`
 - 종목별 `loss_streak_cooled`
+- 종목별 `state_label`
 - 최근 종목별 실현 성과 요약
 - active watchlist 종목
 - 최근 30일 실현손익 / 승률 / 매도 횟수
@@ -282,6 +283,7 @@ The runtime status includes:
 Telegram `/status` now also summarizes:
 - currently selected symbols with `effective_selection_score`
 - blocked symbols, tagged as `live` or `score`
+- top symbol stateboard (`enabled`, `live-derated`, `streak-cooled`, `score-blocked`)
 
 ## Deprioritized Positions
 
@@ -315,7 +317,7 @@ PYTHONPATH=. pytest -q
 ```
 
 Current local regression status:
-- `64 passed`
+- `66 passed`
 
 ---
 
@@ -364,12 +366,15 @@ uvicorn backend.main:app --port 8002
 
 ## Telegram Commands
 
+Detailed operator guide: [docs/superpowers/telegram-commands.md](docs/superpowers/telegram-commands.md)
+
 | Command | Description |
 |---------|-------------|
+| `/start` | Bot introduction + command summary |
 | `/balance` | Current positions + KRW balance |
-| `/status` | Real-time RSI + unrealized P&L per coin |
+| `/status` | Runtime status, RSI, P&L, selection score, blocked summary |
 
-Automated alerts: trade executions, low balance warnings, daily 9AM portfolio report, weekly P&L summary.
+Automated alerts: trade executions, low balance warnings, disk warnings, daily 9AM portfolio report, weekly P&L summary, runtime auto-apply result notifications.
 
 ---
 
