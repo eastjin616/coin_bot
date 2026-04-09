@@ -1,13 +1,211 @@
 # coin_bot 구현 현황
 
+## 2026-04-09: 소액 시드 집중 전략 + 런타임 유니버스 재선정 + EC2 배포
+
+### 일봉 확정봉 기준 신호 정렬 (`backend/ai/chart_generator.py`, `backend/orchestrator.py`, `backend/database.py`)
+- 실운영 RSI 신호가 미완성 현재 일봉을 읽지 않도록 수정
+  - 전략 신호는 이제 **직전 확정 일봉**만 사용
+  - 트레일링/손절은 기존처럼 실시간 현재가 기준 유지
+- `signal_locks` 테이블 추가
+  - 같은 확정 일봉에서 동일 `BUY`/`SELL`을 한 번만 실행
+  - 장중 손절 후 같은 전일 RSI 신호로 재진입하는 문제 방지
+- `runtime_status`의 BTC 레짐도 동일하게 확정 일봉 기준으로 맞춤
+- 텔레그램 `/status`와 런타임 API도 동일한 확정 일봉 기준 RSI로 정렬
+
+### 백테스터/실운영 정렬 (`backtesting/simulator.py`, `backtesting/optimize.py`)
+- 백테스터 매도 조건에서 남아 있던 `MA 데드크로스` 의존을 제거하고, 실운영과 동일하게 **RSI 단독 전략**으로 정렬
+- RSI 탐색 범위를 `30`까지 다시 열어 과매도 진입 후보를 재평가
+- 최신 캐시 데이터 기준 재최적화 결과:
+  - `LINK`: `RSI 50/70`, `trail +5.0%`, `stop -10%`, `+24.5%`
+  - `BCH`: `RSI 40/70`, `trail +5.0%`, `stop -7%`, `+22.2%`
+  - `TRX`: `RSI 40/70`, `trail +5.0%`, `stop -7%`, `+6.8%`
+
+### 소액 시드 집중 배분 (`backend/config.py`, `backend/orchestrator.py`, `backend/execution/coin_executor.py`)
+- `target_position_budget_krw` 도입: 총자산 기준으로 **실효 최대 포지션 수** 계산
+- `min_order_amount_krw`, `max_order_amount_krw` 추가
+- 여러 BUY 신호가 동시에 떠도
+  - 남은 슬롯 수가 적으면 주문 비중을 자동 상향
+  - 과매도 강도 + 백테스트 메타가 더 좋은 종목을 먼저 평가
+- 효과:
+  - 적은 시드가 여러 코인에 잘게 나뉘는 문제 완화
+  - 신호가 많아도 핵심 종목에 더 집중
+
+### 런타임 유니버스 재선정 (`backend/runtime_params.json`)
+- 기본 신규매수 허용 종목을 `LINK / BCH / ADA` 3개로 재선정
+- `BTC`는 장세 필터 전용으로 유지하고 신규 매수는 비활성화
+- 나머지 종목은 최신 현실화 수익 / 최근 OOS / walk-forward 특성을 반영해 사유와 파라미터를 갱신
+
+### 점수 기반 유니버스 선발 (`backtesting/reselect_runtime.py`)
+- 기존: `realistic > 0`, `recent_oos`, `avg_oos` 임계값 통과 여부로 `enabled` 결정
+- 변경: 소액 시드 운영용 **점수 기반 상위 N 선발**
+  - 반영 요소: 현실화 수익, walk-forward 평균 OOS, 최근 OOS, 거래 수, walk-forward 윈도우 수, MDD 페널티
+  - 최소 기준 통과 종목만 후보군에 넣고, 그중 `top_n=3`만 `enabled=true`
+- 최신 자동선정 결과:
+  - `KRW-BCH` #1
+  - `KRW-LINK` #2
+  - `KRW-ADA` #3
+  - `KRW-TRX`는 점수 `+7.3`로 근소하게 밀려 후보 4위
+
+### 기간청산(time stop) 추가 (`backend/orchestrator.py`, `backtesting/simulator.py`)
+- 장기 미청산 포지션이 자금을 묶는 문제 완화용
+- 규칙:
+  - `max_hold_days=10`
+  - `time_stop_min_pnl_pct=0.0`
+- 의미:
+  - 보유 기간이 10일 이상이고
+  - 현재 손익이 0% 미만이면
+  - 다음 확정 일봉 평가 시 `기간청산`
+- 실운영과 백테스터에 동일 규칙 반영
+
+### 최근 실전 성과 기반 자동 디레이팅 (`backend/live_performance.py`, `backend/runtime_params.py`, `backend/runtime_status.py`)
+- 기본 유니버스는 연구 결과(`runtime_params.json`)로 결정
+- 그 위에 최근 30일 실전 성과를 얹어서 신규매수 허용 종목을 한 번 더 거름
+- 기본 규칙:
+  - `live_derating_lookback_days=30`
+  - `live_derating_min_sell_count=3`
+  - 최근 실현손익이 음수이고
+  - 승률 또는 평균 `pnl_pct`가 기준 미달이면
+  - 해당 종목은 **일시적 신규매수 제외**
+- 기존 보유 포지션은 그대로 관리하고, 신규 진입만 차단
+- `/api/runtime/status`에 최근 종목별 실현 성과 요약 포함
+- `/api/runtime/status` `selection` 항목에 `base_enabled`, `live_derated`, `selection_score` 포함
+- 텔레그램 `/status`에
+  - 현재 선발 종목 점수 요약
+  - 실전 성과로 일시 제외된 종목 요약
+  표시
+- 추가 개선:
+  - `/status` 제외 요약에 `live` / `score` 태그 표시
+  - 선발 점수는 `effective_selection_score` 기준으로 노출
+
+### 실전 피드백 점수 루프 (`backend/live_performance.py`, `backend/runtime_params.py`, `backend/orchestrator.py`)
+- 최근 실전 성과를 이진 차단만 하지 않고 **점수 보정치**로 환산
+- `live_score_adjustment`
+  - 최근 SELL 표본이 충분한 종목만 대상
+  - 평균 `pnl_pct`, 최근 승률, 최근 실현손익을 합쳐 계산
+- `effective_selection_score = selection_score + live_score_adjustment`
+- 오케스트레이터의 진입 우선순위는 이제 `effective_selection_score` 를 반영
+  - 같은 과매도 강도면 최근 실전이 더 나았던 종목이 먼저 평가됨
+
+### 연속 손실 쿨다운 (`backend/live_performance.py`, `backend/runtime_params.py`, `backend/runtime_status.py`)
+- 최근 SELL 기준 연속 손실 streak 계산 추가
+- 기본 규칙:
+  - `loss_streak_threshold=2`
+  - `loss_streak_cooldown_days=7`
+  - `loss_streak_lookback_days=30`
+- 최근 2연속 손실 이상이고 마지막 손실이 아직 쿨다운 기간 안이면 신규매수 제외
+- `/api/runtime/status`, 텔레그램 `/status` 에 `loss_streak_cooled` / 요약 노출
+
+### 런타임 리포트 자동생성 (`backtesting/reselect_runtime.py`)
+- `--write-report` 옵션 추가
+- 현재 추천 유니버스를 Markdown으로 저장:
+  - 경로: `docs/superpowers/reports/YYYY-MM-DD-runtime-universe.md`
+- 리포트 내용:
+  - enabled / blocked 종목 구분
+  - selection score, 현실화 수익, walk OOS, recent OOS, 이유
+- 2026-04-09 기준 리포트 생성 완료:
+  - `docs/superpowers/reports/2026-04-09-runtime-universe.md`
+
+### 런타임 리포트 스케줄러 (`deploy/systemd/coinbot-runtime-report.service`, `.timer`)
+- EC2에서 리포트 자동생성을 위한 systemd unit 추가
+- 매일 `00:15 UTC` (`09:15 KST`) 에 실행
+- 실행 명령:
+  - `python -m backtesting.reselect_runtime --top-n 3 --write-report --allow-fetch --auto-apply-runtime`
+
+### 안전장치 포함 자동 반영 (`backtesting/reselect_runtime.py`)
+- 목표: `리포트 생성 -> 조건 충족 시 runtime_params 자동 반영`
+- 안전 게이트:
+  - 제안된 enabled 종목 수가 `top_n` 이상이어야 함
+  - enabled 종목 변경 수가 `max_symbol_changes` 이하이어야 함 (기본 2)
+- 리포트의 `## Auto Apply` 절에
+  - applied 여부
+  - 기존/제안 enabled 목록
+  - 추가/제거 종목
+  - 보류 사유
+  기록
+- EC2 `coinbot-runtime-report.service` 에도 연결 완료
+  - `--allow-fetch --auto-apply-runtime`
+  - 서버 실검증 결과 `status=0/SUCCESS`
+
+### auto-apply 알림 (`backtesting/reselect_runtime.py`)
+- `--notify-telegram` 옵션 추가
+- auto-apply 성공/보류 결과를 텔레그램으로 전송
+- 리포트 파일명, enabled 집합, 추가/제거 종목, blocked 사유 포함
+- EC2 수동 실행 검증:
+  - `coinbot-runtime-report.service` 성공 종료
+  - 저널에 `📨 sent Telegram notification` 확인
+
+### 문서/환경 예시 갱신
+- `README.md`: 최신 파라미터 테이블, 소액 시드 집중 전략, 런타임 유니버스 반영
+- `MEMORY.md`: 운영 메모 최신화
+- `.env.example`: 현재 설정 키 기준으로 정리 (`RISK_ON_*`, `TARGET_POSITION_BUDGET_KRW`, 주문 min/max 등)
+
+### 테스트 / 검증
+- `PYTHONPATH=. pytest -q` → **64 passed**
+- `python -m compileall backend backtesting tests` 통과
+
+### EC2 배포
+- 대상: `ubuntu@43.203.205.237:/home/ubuntu/coin_bot`
+- `rsync`로 코드 동기화 후 `sudo systemctl restart coinbot`
+- 검증:
+  - `systemctl is-active coinbot` → `active`
+  - `journalctl` 에서 `✅ 오케스트레이터 시작`
+  - `runtime params loaded (15 symbols) from /home/ubuntu/coin_bot/backend/runtime_params.json`
+
+---
+
+## 2026-04-08: 업비트 주문 안정성 + 운영 리스크 캡
+
+### 주문 재시도·체결 폴링 (`backend/execution/coin_executor.py`)
+- 시장가 매수/매도 API: 최대 3회 재시도(짧은 백오프)
+- `get_order`: 일시 오류·미체결 대비 지연 재시도(최대 10회), `state==done` 또는 `executed_volume>0` 시 확정
+- `state==cancel` 이면 실패 처리
+
+### 리스크 캡 (`backend/config.py`, `backend/risk_limits.py`, `backend/orchestrator.py`)
+- `max_open_positions` (기본 12, **0이면 비활성화**): 신규 심볼 매수 시 DB `positions` 개수가 상한 이상이면 매수 생략 (이미 보유 중인 심볼 추가매수는 기존 로직상 차단됨)
+- `max_buys_per_day` (기본 48, **0이면 비활성화**): KST 당일 0시 이후 `trades`의 `BUY` 건수가 상한 이상이면 매수 생략
+- 환경변수: `MAX_OPEN_POSITIONS`, `MAX_BUYS_PER_DAY`
+
+### 테스트
+- `tests/test_coin_executor.py` — 체결 조회 폴링
+- `tests/test_orchestrator.py` — 리스크 캡 차단
+- `PYTHONPATH=. pytest -q` → 37 passed
+
+---
+
+## 2026-04-08: 런타임 파라미터 단일화 (`runtime_params.json`)
+
+### 목적
+- 신규 매수 유니버스·코인별 RSI·트레일링/손절Pct를 **한 파일**에서 관리 (`backend/runtime_params.json`)
+- `orchestrator` / `runtime_status`에 흩어져 있던 상수 제거 → 수정 누락·불일치 방지
+
+### 추가·변경 파일
+- **신규** `backend/runtime_params.json` — 종목별 `enabled`, `reason`, `realistic_return_pct`, `recent_oos_pct`, `rsi_buy`, `rsi_sell`, `trailing_activation_percent`, `stop_loss_percent`
+- **신규** `backend/runtime_params.py` — 로드/검증/캐시, `get_active_buy_symbols()`, `rsi_pair()`, `trailing_stop_pair()` 등
+- **수정** `backend/runtime_status.py` — JSON 기반으로 `selection`, 허용/제외 종목 목록 구성
+- **수정** `backend/orchestrator.py` — 위 헬퍼만 사용 (클래스 내 `_RSI_OVERRIDES` / `_PROFIT_STOP_OVERRIDES` 제거)
+- **수정** `backtesting/reselect_runtime.py` — `--write-backend` 옵션: 연구 결과로 JSON의 `enabled`·`reason`·`realistic_return_pct`·`recent_oos_pct`만 갱신 (RSI·트레일링 키는 유지)
+
+### 운용
+- 기본 경로: `backend/runtime_params.json`
+- 다른 파일을 쓰려면 환경변수 `RUNTIME_PARAMS_PATH` 설정
+- 재선정 + 파일 반영:
+  - `PYTHONPATH=. python -m backtesting.reselect_runtime --write-backend`
+- 봇 프로세스 재시작 후 JSON 반영 (모듈 캐시). 런타임 핫 리로드가 필요하면 `runtime_params.reload_runtime_params()` 연동 검토
+
+### 테스트
+- 이후 리스크 캡·주문 재시도 테스트 추가로 **현재 전체 스위트는 37 passed** (상단 `업비트 주문 안정성 + 운영 리스크 캡` 절 참고)
+
+---
+
 ## 2026-04-08: 운영 종목 자동 재선정 도구 + 장세별 포지션 사이징
 
 ### 운영 종목 자동 재선정 도구 (`backtesting/reselect_runtime.py`)
 - 현실화 백테스트 + walk-forward + 최근 OOS 결과를 종합해서 runtime universe 후보를 다시 뽑는 스크립트 추가
 - 실행:
   - `PYTHONPATH=. python -m backtesting.reselect_runtime`
+  - 결과를 `backend/runtime_params.json`에 반영: 같은 명령에 `--write-backend` 추가 (상세는 상단 `런타임 파라미터 단일화` 절)
 - 목적:
-  - `RUNTIME_SELECTION` 상수를 수동 감으로 고르지 않고, 리포트 기반으로 재선정
+  - 운영 종목·사유·OOS 메타를 리포트 기반으로 재선정 (RSI·트레일링은 JSON에서 별도 유지)
 
 ### 장세별 포지션 사이징 (`backend/config.py`, `backend/execution/coin_executor.py`, `backend/orchestrator.py`)
 - 장세를 `risk_on / caution / risk_off` 3단계로 확장
