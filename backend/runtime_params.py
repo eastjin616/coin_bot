@@ -81,9 +81,23 @@ def reload_runtime_params() -> dict[str, dict[str, Any]]:
     return load_runtime_params(force=True)
 
 
+def _manual_override(row: dict[str, Any]) -> str | None:
+    value = str(row.get("manual_override") or "").strip().lower()
+    return value if value in {"enabled", "disabled"} else None
+
+
+def _base_enabled(row: dict[str, Any]) -> bool:
+    override = _manual_override(row)
+    if override == "enabled":
+        return True
+    if override == "disabled":
+        return False
+    return bool(row["enabled"])
+
+
 def get_base_active_buy_symbols() -> dict[str, str]:
     """symbol -> display name for symbols enabled by research/runtime_params.json."""
-    return {s: row["name"] for s, row in symbol_table().items() if row["enabled"]}
+    return {s: row["name"] for s, row in symbol_table().items() if _base_enabled(row)}
 
 
 def get_active_buy_symbols() -> dict[str, str]:
@@ -105,8 +119,12 @@ def runtime_selection_meta() -> dict[str, dict[str, Any]]:
     live_adjustments = live_score_adjustments()
     sel: dict[str, dict[str, Any]] = {}
     for sym, row in symbol_table().items():
-        effective_enabled = bool(row["enabled"]) and sym not in derated and sym not in streak_cooled
+        base_enabled = _base_enabled(row)
+        effective_enabled = base_enabled and sym not in derated and sym not in streak_cooled
         reason = str(row["reason"])
+        override = _manual_override(row)
+        if override:
+            reason = f"{reason} | manual-override: {override}"
         if sym in derated:
             reason = f"{reason} | live-derated: {derated[sym]}"
         if sym in streak_cooled:
@@ -116,9 +134,10 @@ def runtime_selection_meta() -> dict[str, dict[str, Any]]:
         sel[sym] = {
             "name": row["name"],
             "enabled": effective_enabled,
-            "base_enabled": bool(row["enabled"]),
+            "base_enabled": base_enabled,
             "live_derated": sym in derated,
             "loss_streak_cooled": sym in streak_cooled,
+            "manual_override": override,
             "reason": reason,
             "realistic_return_pct": row["realistic_return_pct"],
             "recent_oos_pct": row.get("recent_oos_pct"),
@@ -146,3 +165,36 @@ def trailing_stop_pair(
     if not row:
         return (default_activation, default_stop)
     return (float(row["trailing_activation_percent"]), float(row["stop_loss_percent"]))
+
+
+def normalize_runtime_symbol(value: str) -> str:
+    symbol = value.strip().upper()
+    if not symbol:
+        raise ValueError("empty symbol")
+    return symbol if symbol.startswith("KRW-") else f"KRW-{symbol}"
+
+
+def set_symbol_manual_override(symbol: str, override: str | None, *, actor: str = "operator") -> dict[str, Any]:
+    symbol = normalize_runtime_symbol(symbol)
+    path = _params_path()
+    with path.open(encoding="utf-8") as f:
+        table = json.load(f)
+    row = table.get(symbol)
+    if not row:
+        raise KeyError(symbol)
+
+    if override is None:
+        row.pop("manual_override", None)
+        row.pop("manual_override_note", None)
+    else:
+        override = override.strip().lower()
+        if override not in {"enabled", "disabled"}:
+            raise ValueError(f"invalid manual override: {override}")
+        row["manual_override"] = override
+        row["manual_override_note"] = f"set via {actor}"
+
+    with path.open("w", encoding="utf-8") as f:
+        json.dump(table, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+    reload_runtime_params()
+    return table[symbol]

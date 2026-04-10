@@ -3,9 +3,28 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 from backend.config import get_settings
 from backend.database import get_db
+from backend.runtime_params import normalize_runtime_symbol, set_symbol_manual_override
 from backend.runtime_status import get_runtime_status
 
 logger = logging.getLogger(__name__)
+
+
+def _is_allowed_chat(update: Update) -> bool:
+    settings = get_settings()
+    chat_id = update.effective_chat.id
+    return chat_id in settings.allowed_chat_ids
+
+
+def _command_help_text() -> str:
+    return (
+        "안녕하세요! AI 자동매매 봇입니다. 🤖\n\n"
+        "/balance - 현재 보유 포지션 조회\n"
+        "/status - 실시간 RSI + 미실현 손익\n"
+        "/watchlist - 현재 신규매수 허용/보유 관리 종목 조회\n"
+        "/watchlist_remove BTC - 해당 심볼 신규매수 제외\n"
+        "/watchlist_add BTC - 해당 심볼 신규매수 허용\n"
+        "/list - 사용 가능한 명령 다시 보기"
+    )
 
 
 def _format_signal_candle_label(iso_value: str | None) -> str:
@@ -226,16 +245,17 @@ async def send_daily_position_report():
 
 
 async def _start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "안녕하세요! AI 자동매매 봇입니다. 🤖\n\n"
-        "/balance - 현재 보유 포지션 조회\n"
-        "/status - 실시간 RSI + 미실현 손익"
-    )
+    await update.message.reply_text(_command_help_text())
+
+
+async def _list_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed_chat(update):
+        await update.message.reply_text("⛔ 접근 권한이 없습니다.")
+        return
+    await update.message.reply_text(_command_help_text())
 
 async def _balance_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    settings = get_settings()
-    chat_id = update.effective_chat.id
-    if chat_id not in settings.allowed_chat_ids:
+    if not _is_allowed_chat(update):
         await update.message.reply_text("⛔ 접근 권한이 없습니다.")
         return
 
@@ -264,9 +284,7 @@ async def _balance_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ 잔고 조회 중 오류가 발생했습니다.")
 
 async def _status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    settings = get_settings()
-    chat_id = update.effective_chat.id
-    if chat_id not in settings.allowed_chat_ids:
+    if not _is_allowed_chat(update):
         await update.message.reply_text("⛔ 접근 권한이 없습니다.")
         return
 
@@ -349,10 +367,103 @@ async def _status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"status 조회 실패: {e}")
         await update.message.reply_text("❌ 조회 중 오류가 발생했습니다.")
 
+
+async def _watchlist_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed_chat(update):
+        await update.message.reply_text("⛔ 접근 권한이 없습니다.")
+        return
+
+    try:
+        runtime = get_runtime_status()
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT symbol FROM positions WHERE market = 'coin'")
+            held_symbols = sorted(row["symbol"] for row in cur.fetchall())
+
+        lines = [
+            "🧾 런타임 감시 종목",
+            f"신규매수 허용: {', '.join(sym.split('-')[1] for sym in runtime['buy_enabled_symbols']) or '없음'}",
+            f"보유 관리 중: {', '.join(sym.split('-')[1] for sym in held_symbols) or '없음'}",
+        ]
+        manual_overrides = [row for row in runtime.get("selection", []) if row.get("manual_override")]
+        if manual_overrides:
+            lines.append(
+                "수동 오버라이드: "
+                + ", ".join(f"{row['symbol'].split('-')[1]}={row['manual_override']}" for row in manual_overrides)
+            )
+        lines.append("")
+        lines.append("제외: /watchlist_remove BTC")
+        lines.append("복구: /watchlist_add BTC")
+        await update.message.reply_text("\n".join(lines))
+    except Exception as e:
+        logger.error(f"watchlist 조회 실패: {e}")
+        await update.message.reply_text("❌ 감시 종목 조회 중 오류가 발생했습니다.")
+
+
+def _held_coin_symbols() -> set[str]:
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT symbol FROM positions WHERE market = 'coin'")
+        return {row["symbol"] for row in cur.fetchall()}
+
+
+async def _watchlist_remove_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed_chat(update):
+        await update.message.reply_text("⛔ 접근 권한이 없습니다.")
+        return
+
+    if not context.args:
+        await update.message.reply_text("사용법: /watchlist_remove BTC")
+        return
+
+    try:
+        symbol = normalize_runtime_symbol(context.args[0])
+        set_symbol_manual_override(symbol, "disabled", actor="telegram")
+        held = symbol in _held_coin_symbols()
+        if held:
+            await update.message.reply_text(
+                f"🚫 {symbol} 신규매수 제외 완료\n보유 중인 포지션이라 watchlist에는 남고 출구 관리만 유지됩니다."
+            )
+        else:
+            await update.message.reply_text(
+                f"🚫 {symbol} 신규매수 제외 완료\n다음 사이클부터 runtime watchlist에서도 비활성화됩니다."
+            )
+    except KeyError:
+        await update.message.reply_text("❌ runtime_params.json에 없는 심볼입니다.")
+    except Exception as e:
+        logger.error(f"watchlist_remove 실패: {e}")
+        await update.message.reply_text("❌ 감시 종목 제외 중 오류가 발생했습니다.")
+
+
+async def _watchlist_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed_chat(update):
+        await update.message.reply_text("⛔ 접근 권한이 없습니다.")
+        return
+
+    if not context.args:
+        await update.message.reply_text("사용법: /watchlist_add BTC")
+        return
+
+    try:
+        symbol = normalize_runtime_symbol(context.args[0])
+        set_symbol_manual_override(symbol, "enabled", actor="telegram")
+        await update.message.reply_text(
+            f"✅ {symbol} 신규매수 허용 완료\n다음 사이클부터 runtime selection에 다시 반영됩니다."
+        )
+    except KeyError:
+        await update.message.reply_text("❌ runtime_params.json에 없는 심볼입니다.")
+    except Exception as e:
+        logger.error(f"watchlist_add 실패: {e}")
+        await update.message.reply_text("❌ 감시 종목 복구 중 오류가 발생했습니다.")
+
 def setup_bot() -> Application:
     settings = get_settings()
     app = Application.builder().token(settings.telegram_bot_token).build()
     app.add_handler(CommandHandler("start", _start_handler))
+    app.add_handler(CommandHandler("list", _list_handler))
     app.add_handler(CommandHandler("balance", _balance_handler))
     app.add_handler(CommandHandler("status", _status_handler))
+    app.add_handler(CommandHandler("watchlist", _watchlist_handler))
+    app.add_handler(CommandHandler("watchlist_remove", _watchlist_remove_handler))
+    app.add_handler(CommandHandler("watchlist_add", _watchlist_add_handler))
     return app
