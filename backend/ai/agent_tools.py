@@ -3,7 +3,7 @@ import logging
 import pyupbit
 from langchain_core.tools import tool
 from backend.database import get_db_conn
-from backend.execution.coin_executor import CoinExecutor
+from backend.execution.coin_executor import CoinExecutor, get_current_prices_safe
 from backend.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -27,13 +27,7 @@ def get_portfolio_tool(query: str) -> str:
         for b in balances
         if b.get("currency") != "KRW" and float(b.get("balance", 0)) > 0
     ]
-    prices = {}
-    if coin_symbols:
-        try:
-            result = pyupbit.get_current_price(coin_symbols)
-            prices = result if isinstance(result, dict) else {coin_symbols[0]: result}
-        except Exception:
-            pass
+    prices = get_current_prices_safe(coin_symbols)
 
     lines = [f"KRW 잔고: {krw:,.0f}원"]
     total = krw

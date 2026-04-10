@@ -1,11 +1,42 @@
 import logging
 import time
+from datetime import datetime
 
 import pyupbit
 from backend.config import get_settings
 from backend.database import get_db
 
 logger = logging.getLogger(__name__)
+
+
+def get_current_prices_safe(symbols: list[str]) -> dict[str, float]:
+    """지원하지 않는 심볼이 섞여도 가능한 가격만 안전하게 조회한다."""
+    wanted = [symbol for symbol in symbols if symbol]
+    if not wanted:
+        return {}
+
+    try:
+        supported = set(pyupbit.get_tickers("KRW"))
+    except Exception as e:
+        logger.warning("지원 KRW 심볼 조회 실패, 개별 현재가 조회로 폴백: %s", e)
+        supported = set(wanted)
+
+    prices: dict[str, float] = {}
+    query_symbols = [symbol for symbol in wanted if symbol in supported]
+    unsupported = sorted(set(wanted) - set(query_symbols))
+    if unsupported:
+        logger.info("현재가 조회 제외 심볼: %s", ", ".join(unsupported))
+
+    for symbol in query_symbols:
+        try:
+            price = pyupbit.get_current_price(symbol)
+            if isinstance(price, dict):
+                price = price.get(symbol, 0.0)
+            prices[symbol] = float(price or 0.0)
+        except Exception as e:
+            logger.warning("개별 현재가 조회 실패 (%s): %s", symbol, e)
+
+    return prices
 
 class CoinExecutor:
     def __init__(self):
@@ -77,6 +108,383 @@ class CoinExecutor:
         logger.error("체결 조회 타임아웃: %s", order_uuid)
         return None
 
+    def _fetch_order_snapshot(self, order_uuid: str) -> dict | None:
+        """복구 루프용 단일 주문 조회."""
+        try:
+            return self.upbit.get_order(order_uuid)
+        except Exception as e:
+            logger.warning("주문 스냅샷 조회 실패 (%s): %s", order_uuid, e)
+            return None
+
+    def _fetch_recent_done_orders(self, symbol: str, limit: int = 5) -> list[dict]:
+        """심볼별 최근 체결 주문 조회. pyupbit 반환 형태 차이를 흡수한다."""
+        if not self.upbit:
+            return []
+        try:
+            result = self.upbit.get_order(symbol, state="done", limit=limit, contain_req=True)
+        except Exception as e:
+            logger.warning("최근 체결 주문 조회 실패 (%s): %s", symbol, e)
+            return []
+
+        payload = result[0] if isinstance(result, tuple) else result
+        if payload is None:
+            return []
+        if isinstance(payload, list):
+            return [row for row in payload if isinstance(row, dict)]
+        if isinstance(payload, dict):
+            return [payload]
+        return []
+
+    def _load_pending_order_journal(self, limit: int = 20) -> list[dict]:
+        try:
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    """
+                    SELECT order_uuid, market, symbol, action, requested_amount_krw,
+                           requested_quantity, entry_price_snapshot, order_created_at, status
+                    FROM order_journal
+                    WHERE status IN ('submitted', 'persist_failed', 'reconciling')
+                    ORDER BY created_at ASC
+                    LIMIT %s
+                    """,
+                    (limit,),
+                )
+                return list(cur.fetchall())
+        except Exception as e:
+            logger.error("미완료 주문 저널 조회 실패: %s", e)
+            return []
+
+    def _trade_already_recorded(self, order_uuid: str) -> bool:
+        try:
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute("SELECT 1 FROM trades WHERE order_uuid = %s", (order_uuid,))
+                return cur.fetchone() is not None
+        except Exception as e:
+            logger.warning("기존 주문 기록 확인 실패 (%s): %s", order_uuid, e)
+            return False
+
+    def _order_journal_exists(self, order_uuid: str) -> bool:
+        try:
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute("SELECT 1 FROM order_journal WHERE order_uuid = %s", (order_uuid,))
+                return cur.fetchone() is not None
+        except Exception as e:
+            logger.warning("주문 저널 존재 확인 실패 (%s): %s", order_uuid, e)
+            return False
+
+    def _position_entry_price(self, symbol: str) -> float:
+        try:
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT entry_price FROM positions WHERE market = 'coin' AND symbol = %s",
+                    (symbol,),
+                )
+                row = cur.fetchone()
+            return float(row["entry_price"] or 0.0) if row else 0.0
+        except Exception as e:
+            logger.warning("포지션 진입가 조회 실패 (%s): %s", symbol, e)
+            return 0.0
+
+    def _reconstruct_entry_price_from_trades(self, symbol: str, cutoff_ts: datetime | None = None) -> float:
+        """체결 이력으로 해당 시점 직전의 평균 진입가를 재구성한다."""
+        try:
+            with get_db() as conn:
+                cur = conn.cursor()
+                if cutoff_ts is None:
+                    cur.execute(
+                        """
+                        SELECT action, price, quantity
+                        FROM trades
+                        WHERE market = 'coin' AND symbol = %s
+                        ORDER BY executed_at ASC, id ASC
+                        """,
+                        (symbol,),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        SELECT action, price, quantity
+                        FROM trades
+                        WHERE market = 'coin' AND symbol = %s AND executed_at < %s
+                        ORDER BY executed_at ASC, id ASC
+                        """,
+                        (symbol, cutoff_ts),
+                    )
+                rows = cur.fetchall()
+        except Exception as e:
+            logger.warning("체결 이력 기반 진입가 복원 실패 (%s): %s", symbol, e)
+            return 0.0
+
+        open_qty = 0.0
+        avg_entry = 0.0
+        for row in rows:
+            action = str(row.get("action") or "").upper()
+            qty = float(row.get("quantity") or 0.0)
+            price = float(row.get("price") or 0.0)
+            if qty <= 0 or price < 0:
+                continue
+            if action == "BUY":
+                new_qty = open_qty + qty
+                if new_qty <= 0:
+                    open_qty = 0.0
+                    avg_entry = 0.0
+                elif open_qty <= 0:
+                    open_qty = qty
+                    avg_entry = price
+                else:
+                    avg_entry = ((avg_entry * open_qty) + (price * qty)) / new_qty
+                    open_qty = new_qty
+            elif action == "SELL":
+                if qty >= open_qty:
+                    open_qty = 0.0
+                    avg_entry = 0.0
+                else:
+                    open_qty -= qty
+        return avg_entry if open_qty > 0 else 0.0
+
+    def _parse_exchange_created_at(self, value) -> datetime | None:
+        if not value:
+            return None
+        if isinstance(value, datetime):
+            return value
+        text = str(value).strip()
+        if not text:
+            return None
+        try:
+            return datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+
+    def _record_order_submission(
+        self,
+        *,
+        symbol: str,
+        action: str,
+        order_uuid: str,
+        requested_amount_krw: float | None = None,
+        requested_quantity: float | None = None,
+        entry_price_snapshot: float | None = None,
+        order_created_at: datetime | None = None,
+    ) -> None:
+        try:
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    """
+                    INSERT INTO order_journal (
+                        order_uuid, market, symbol, action, requested_amount_krw,
+                        requested_quantity, entry_price_snapshot, order_created_at, status, updated_at
+                    )
+                    VALUES (%s, 'coin', %s, %s, %s, %s, %s, COALESCE(%s, NOW()), 'submitted', NOW())
+                    ON CONFLICT (order_uuid)
+                    DO UPDATE SET
+                        requested_amount_krw = COALESCE(EXCLUDED.requested_amount_krw, order_journal.requested_amount_krw),
+                        requested_quantity = COALESCE(EXCLUDED.requested_quantity, order_journal.requested_quantity),
+                        entry_price_snapshot = COALESCE(EXCLUDED.entry_price_snapshot, order_journal.entry_price_snapshot),
+                        order_created_at = COALESCE(order_journal.order_created_at, EXCLUDED.order_created_at),
+                        updated_at = NOW(),
+                        last_error = NULL,
+                        status = CASE
+                            WHEN order_journal.status = 'completed' THEN order_journal.status
+                            ELSE 'submitted'
+                        END
+                    """,
+                    (
+                        order_uuid,
+                        symbol,
+                        action,
+                        requested_amount_krw,
+                        requested_quantity,
+                        entry_price_snapshot,
+                        order_created_at,
+                    ),
+                )
+                conn.commit()
+        except Exception as e:
+            logger.error("주문 제출 저널 기록 실패 [%s %s %s]: %s", symbol, action, order_uuid, e)
+
+    def _mark_order_journal_status(self, order_uuid: str, status: str, *, last_error: str | None = None) -> None:
+        try:
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    """
+                    UPDATE order_journal
+                    SET
+                        status = %s,
+                        last_error = %s,
+                        updated_at = NOW(),
+                        reconciled_at = CASE
+                            WHEN %s IN ('completed', 'canceled') THEN NOW()
+                            ELSE reconciled_at
+                        END
+                    WHERE order_uuid = %s
+                    """,
+                    (status, last_error, status, order_uuid),
+                )
+                conn.commit()
+        except Exception as e:
+            logger.warning("주문 저널 상태 갱신 실패 (%s -> %s): %s", order_uuid, status, e)
+
+    def reconcile_open_order_journal(self, limit: int = 20) -> dict[str, int]:
+        summary = {"checked": 0, "completed": 0, "canceled": 0, "pending": 0, "errors": 0}
+        if not self.upbit:
+            return summary
+
+        for row in self._load_pending_order_journal(limit=limit):
+            order_uuid = row["order_uuid"]
+            symbol = row["symbol"]
+            action = row["action"]
+            summary["checked"] += 1
+
+            if self._trade_already_recorded(order_uuid):
+                self._mark_order_journal_status(order_uuid, "completed")
+                summary["completed"] += 1
+                continue
+
+            self._mark_order_journal_status(order_uuid, "reconciling")
+            detail = self._fetch_order_snapshot(order_uuid)
+            if not detail:
+                self._mark_order_journal_status(order_uuid, "persist_failed", last_error="snapshot lookup failed")
+                summary["errors"] += 1
+                continue
+
+            if detail.get("state") == "cancel":
+                self._mark_order_journal_status(order_uuid, "canceled")
+                summary["canceled"] += 1
+                continue
+
+            quantity = float(detail.get("executed_volume") or 0.0)
+            if not (detail.get("state") == "done" or quantity > 0):
+                self._mark_order_journal_status(order_uuid, "submitted")
+                summary["pending"] += 1
+                continue
+
+            price = float(detail.get("avg_price") or detail.get("price") or 0.0)
+            if action == "BUY" and price == 0 and quantity > 0:
+                requested_amount = float(row.get("requested_amount_krw") or 0.0)
+                if requested_amount > 0:
+                    price = requested_amount / quantity
+
+            if action == "BUY":
+                ok = self._record_buy_fill(symbol, order_uuid, 100.0, price, quantity)
+            else:
+                entry_price = float(row.get("entry_price_snapshot") or 0.0)
+                if entry_price <= 0:
+                    entry_price = self._reconstruct_entry_price_from_trades(symbol, row.get("order_created_at"))
+                pnl_krw = (price - entry_price) * quantity if entry_price > 0 else 0.0
+                pnl_pct = (price - entry_price) / entry_price * 100 if entry_price > 0 else 0.0
+                ok = self._record_sell_fill(
+                    symbol,
+                    order_uuid,
+                    100.0,
+                    price,
+                    quantity,
+                    pnl_krw=pnl_krw,
+                    pnl_pct=pnl_pct,
+                )
+
+            if ok:
+                self._mark_order_journal_status(order_uuid, "completed")
+                summary["completed"] += 1
+            else:
+                self._mark_order_journal_status(order_uuid, "persist_failed", last_error="fill persistence failed")
+                summary["errors"] += 1
+
+        return summary
+
+    def backfill_recent_done_orders(self, symbols: list[str], *, per_symbol_limit: int = 5) -> dict[str, int]:
+        """최근 체결 주문 중 local journal/trades에 없는 UUID를 복구 큐에 넣는다."""
+        summary = {"symbols": 0, "orders_seen": 0, "seeded": 0}
+        if not self.upbit:
+            return summary
+
+        seen_symbols: set[str] = set()
+        for symbol in symbols:
+            if not symbol or symbol in seen_symbols:
+                continue
+            seen_symbols.add(symbol)
+            summary["symbols"] += 1
+            for order in self._fetch_recent_done_orders(symbol, limit=per_symbol_limit):
+                summary["orders_seen"] += 1
+                order_uuid = order.get("uuid")
+                if not order_uuid:
+                    continue
+                if self._trade_already_recorded(order_uuid) or self._order_journal_exists(order_uuid):
+                    continue
+
+                side = str(order.get("side") or "").lower()
+                action = "BUY" if side == "bid" else "SELL" if side == "ask" else ""
+                if not action:
+                    continue
+
+                executed_volume = float(order.get("executed_volume") or order.get("volume") or 0.0)
+                avg_price = float(order.get("avg_price") or order.get("price") or 0.0)
+                requested_amount = avg_price * executed_volume if action == "BUY" and avg_price and executed_volume else None
+                created_at = self._parse_exchange_created_at(order.get("created_at"))
+                if action == "SELL":
+                    entry_price_snapshot = self._position_entry_price(symbol)
+                    if entry_price_snapshot <= 0:
+                        entry_price_snapshot = self._reconstruct_entry_price_from_trades(symbol, created_at)
+                else:
+                    entry_price_snapshot = None
+                self._record_order_submission(
+                    symbol=symbol,
+                    action=action,
+                    order_uuid=order_uuid,
+                    requested_amount_krw=requested_amount,
+                    requested_quantity=executed_volume if action == "SELL" else None,
+                    entry_price_snapshot=entry_price_snapshot,
+                    order_created_at=created_at,
+                )
+                summary["seeded"] += 1
+
+        return summary
+
+    def get_all_coin_holdings_snapshot(self) -> tuple[bool, list[dict]]:
+        """거래소 실보유 코인 목록과 조회 성공 여부를 함께 반환한다."""
+        if not self.upbit:
+            return True, []
+
+        try:
+            balances = self.upbit.get_balances() or []
+        except Exception as e:
+            logger.error(f"전체 코인 잔고 조회 실패: {e}")
+            return False, []
+
+        balances = [row for row in balances if isinstance(row, dict)]
+        holdings = []
+        symbols = []
+        for row in balances:
+            currency = str(row.get("currency") or "").upper()
+            if currency == "KRW":
+                continue
+            quantity = float(row.get("balance") or 0.0)
+            if quantity <= 0:
+                continue
+            symbol = f"KRW-{currency}"
+            symbols.append(symbol)
+            holdings.append(
+                {
+                    "symbol": symbol,
+                    "quantity": quantity,
+                    "avg_buy_price": float(row.get("avg_buy_price") or 0.0),
+                }
+            )
+
+        prices = get_current_prices_safe(symbols)
+
+        for row in holdings:
+            current_price = prices.get(row["symbol"], row["avg_buy_price"])
+            row["current_price"] = current_price
+            row["eval_value"] = row["quantity"] * current_price
+
+        return True, holdings
+
     def get_balance_krw(self) -> float:
         """KRW 잔고 조회"""
         if not self.upbit:
@@ -97,6 +505,9 @@ class CoinExecutor:
         except Exception as e:
             logger.error(f"코인 잔고 조회 실패: {e}")
             return 0.0
+
+    def get_all_coin_holdings(self) -> list[dict]:
+        return self.get_all_coin_holdings_snapshot()[1]
 
     def buy_fixed_amount(self, symbol: str, confidence: float, amount_krw: float) -> dict | None:
         """시장가 매수 — 금액 직접 지정"""
@@ -133,6 +544,12 @@ class CoinExecutor:
             result = self._submit_buy_with_retry(symbol, order_amount)
             if not result or "uuid" not in result:
                 return None
+            self._record_order_submission(
+                symbol=symbol,
+                action="BUY",
+                order_uuid=result["uuid"],
+                requested_amount_krw=order_amount,
+            )
             order_detail = self._fetch_order_detail(result["uuid"])
             if not order_detail:
                 return None
@@ -141,8 +558,15 @@ class CoinExecutor:
             if price == 0 and quantity > 0:
                 price = order_amount / quantity
 
-            self._save_trade(symbol, "BUY", confidence, price, quantity)
-            self._save_position(symbol, price, quantity)
+            if not self._record_buy_fill(
+                symbol,
+                result["uuid"],
+                confidence,
+                price,
+                quantity,
+            ):
+                return None
+            self._mark_order_journal_status(result["uuid"], "completed")
             logger.info(f"매수 완료: {symbol} {quantity:.6f} @ {price:.0f}원")
             return {"symbol": symbol, "action": "BUY", "price": price, "quantity": quantity}
         except Exception as e:
@@ -184,6 +608,13 @@ class CoinExecutor:
 
             result = self._submit_sell_with_retry(symbol, coin_balance)
             if result and "uuid" in result:
+                self._record_order_submission(
+                    symbol=symbol,
+                    action="SELL",
+                    order_uuid=result["uuid"],
+                    requested_quantity=coin_balance,
+                    entry_price_snapshot=entry_price,
+                )
                 order_detail = self._fetch_order_detail(result["uuid"])
                 if not order_detail:
                     return None
@@ -195,8 +626,17 @@ class CoinExecutor:
 
                 pnl_krw = (price - entry_price) * quantity if entry_price > 0 else 0.0
                 pnl_pct = (price - entry_price) / entry_price * 100 if entry_price > 0 else 0.0
-                self._save_trade(symbol, "SELL", confidence, price, quantity, pnl_krw=pnl_krw, pnl_pct=pnl_pct)
-                self._remove_position(symbol)
+                if not self._record_sell_fill(
+                    symbol,
+                    result["uuid"],
+                    confidence,
+                    price,
+                    quantity,
+                    pnl_krw=pnl_krw,
+                    pnl_pct=pnl_pct,
+                ):
+                    return None
+                self._mark_order_journal_status(result["uuid"], "completed")
                 logger.info(f"매도 완료: {symbol} {quantity:.6f} @ {price:.0f}원 | 손익 {pnl_pct:+.2f}% ({pnl_krw:+,.0f}원)")
                 return {"symbol": symbol, "action": "SELL", "price": price, "quantity": quantity, "entry_price": entry_price, "pnl_pct": pnl_pct, "pnl_krw": pnl_krw}
             else:
@@ -205,48 +645,118 @@ class CoinExecutor:
             logger.error(f"매도 실패: {e}")
         return None
 
-    def _save_trade(self, symbol: str, action: str, confidence: float, price: float, quantity: float,
-                    pnl_krw: float = 0.0, pnl_pct: float = 0.0):
-        try:
-            with get_db() as conn:
-                cur = conn.cursor()
-                cur.execute(
-                    "INSERT INTO trades (market, symbol, action, confidence, price, quantity, pnl_krw, pnl_pct) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-                    ("coin", symbol, action, confidence, price, quantity, pnl_krw, pnl_pct)
-                )
-                conn.commit()
-        except Exception as e:
-            logger.error(f"거래 저장 실패: {e}")
+    def _insert_trade_row(
+        self,
+        cur,
+        *,
+        symbol: str,
+        order_uuid: str | None,
+        action: str,
+        confidence: float,
+        price: float,
+        quantity: float,
+        pnl_krw: float = 0.0,
+        pnl_pct: float = 0.0,
+    ) -> bool:
+        cur.execute(
+            """
+            INSERT INTO trades (
+                market, symbol, action, order_uuid, confidence, price, quantity, pnl_krw, pnl_pct
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (order_uuid) DO NOTHING
+            RETURNING id
+            """,
+            ("coin", symbol, action, order_uuid, confidence, price, quantity, pnl_krw, pnl_pct),
+        )
+        inserted = cur.fetchone() is not None
+        if not inserted and order_uuid:
+            logger.warning("이미 기록된 주문 UUID 스킵: %s %s", symbol, order_uuid)
+        return inserted
 
-    def _save_position(self, symbol: str, price: float, quantity: float):
+    def _record_buy_fill(
+        self,
+        symbol: str,
+        order_uuid: str | None,
+        confidence: float,
+        price: float,
+        quantity: float,
+    ) -> bool:
         try:
             with get_db() as conn:
                 cur = conn.cursor()
-                cur.execute(
-                    "SELECT entry_price, quantity FROM positions WHERE market = 'coin' AND symbol = %s",
-                    (symbol,)
+                inserted = self._insert_trade_row(
+                    cur,
+                    symbol=symbol,
+                    order_uuid=order_uuid,
+                    action="BUY",
+                    confidence=confidence,
+                    price=price,
+                    quantity=quantity,
                 )
-                row = cur.fetchone()
-                if row:
-                    old_price = float(row["entry_price"])
-                    old_qty = float(row["quantity"])
-                    new_qty = old_qty + quantity
-                    new_avg = (old_price * old_qty + price * quantity) / new_qty
+                if inserted:
                     cur.execute(
-                        "UPDATE positions SET entry_price = %s, quantity = %s WHERE market = 'coin' AND symbol = %s",
-                        (new_avg, new_qty, symbol)
-                    )
-                    # highest_price는 변경하지 않음 (추가매수 시 기존 최고가 유지)
-                    logger.info(f"포지션 추가매수 [{symbol}]: 평균단가 {new_avg:.0f}원, 수량 {new_qty:.6f}")
-                else:
-                    cur.execute(
-                        "INSERT INTO positions (market, symbol, entry_price, quantity, highest_price) "
-                        "VALUES (%s, %s, %s, %s, %s)",
-                        ("coin", symbol, price, quantity, price)  # highest_price = entry_price
+                        """
+                        INSERT INTO positions (market, symbol, entry_price, quantity, highest_price, source)
+                        VALUES (%s, %s, %s, %s, %s, 'bot')
+                        ON CONFLICT (market, symbol)
+                        DO UPDATE SET
+                            entry_price = CASE
+                                WHEN positions.quantity + EXCLUDED.quantity <= 0 THEN EXCLUDED.entry_price
+                                ELSE (
+                                    (positions.entry_price * positions.quantity)
+                                    + (EXCLUDED.entry_price * EXCLUDED.quantity)
+                                ) / (positions.quantity + EXCLUDED.quantity)
+                            END,
+                            quantity = positions.quantity + EXCLUDED.quantity,
+                            highest_price = GREATEST(
+                                COALESCE(positions.highest_price, positions.entry_price, 0),
+                                EXCLUDED.highest_price
+                            ),
+                            source = positions.source,
+                            imported_at = positions.imported_at,
+                            opened_at = LEAST(positions.opened_at, EXCLUDED.opened_at)
+                        """,
+                        ("coin", symbol, price, quantity, price),
                     )
                 conn.commit()
+                return True
         except Exception as e:
-            logger.error(f"포지션 저장 실패: {e}")
+            logger.error(f"매수 체결 반영 실패: {e}")
+        return False
+
+    def _record_sell_fill(
+        self,
+        symbol: str,
+        order_uuid: str | None,
+        confidence: float,
+        price: float,
+        quantity: float,
+        *,
+        pnl_krw: float = 0.0,
+        pnl_pct: float = 0.0,
+    ) -> bool:
+        try:
+            with get_db() as conn:
+                cur = conn.cursor()
+                inserted = self._insert_trade_row(
+                    cur,
+                    symbol=symbol,
+                    order_uuid=order_uuid,
+                    action="SELL",
+                    confidence=confidence,
+                    price=price,
+                    quantity=quantity,
+                    pnl_krw=pnl_krw,
+                    pnl_pct=pnl_pct,
+                )
+                if inserted:
+                    cur.execute("DELETE FROM positions WHERE market = 'coin' AND symbol = %s", (symbol,))
+                conn.commit()
+                return True
+        except Exception as e:
+            logger.error(f"매도 체결 반영 실패: {e}")
+        return False
 
     def _remove_position(self, symbol: str):
         try:

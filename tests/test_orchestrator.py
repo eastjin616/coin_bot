@@ -23,6 +23,8 @@ def make_orchestrator():
         settings.max_order_amount_krw = 50000
         settings.max_hold_days = 10
         settings.time_stop_min_pnl_pct = 0.0
+        settings.manual_holding_policy = "alert_only"
+        settings.manual_holding_min_value_krw = 10000
         mock_settings.return_value = settings
         from backend.orchestrator import Orchestrator
         return Orchestrator()
@@ -134,6 +136,15 @@ class TestRiskCaps:
         with patch.object(orc, "_estimate_total_equity_krw", return_value=90000):
             assert orc._effective_max_open_positions() == 1
 
+    def test_estimate_total_equity_prefers_mark_to_market_holdings(self):
+        orc = make_orchestrator()
+        with patch.object(orc.coin_executor, "get_balance_krw", return_value=20000.0), \
+             patch.object(orc.coin_executor, "get_all_coin_holdings", return_value=[
+                 {"symbol": "KRW-LINK", "eval_value": 45000.0},
+                 {"symbol": "KRW-SAND", "eval_value": 55000.0},
+             ]):
+            assert orc._estimate_total_equity_krw() == 120000.0
+
     def test_buy_order_ratio_concentrates_when_slots_are_limited(self):
         orc = make_orchestrator()
         orc.settings.target_position_budget_krw = 50000
@@ -156,6 +167,26 @@ class TestRiskCaps:
                  patch.object(orc.coin_executor, "buy") as mock_buy:
                 await orc.analyze_and_trade("coin", "KRW-SOL", "SOL", bear_market=False, market_regime="risk_on")
             mock_buy.assert_not_called()
+
+        asyncio.run(run())
+
+
+class TestRunCycle:
+    def test_run_coin_cycle_reconciles_order_journal_first(self):
+        orc = make_orchestrator()
+
+        async def run():
+            with patch.object(orc.coin_executor, "reconcile_open_order_journal", return_value={"checked": 0, "completed": 0, "canceled": 0, "pending": 0, "errors": 0}) as mock_reconcile, \
+                 patch.object(orc, "_sync_runtime_watchlist") as mock_sync, \
+                 patch.object(orc, "_cleanup_zombie_positions") as mock_cleanup, \
+                 patch.object(orc, "_sell_orphaned_positions") as mock_orphan, \
+                 patch("backend.orchestrator.get_coin_signal_indicators", return_value={"rsi": 50, "ma5": 100, "ma20": 100, "current_price": 100}), \
+                 patch("backend.orchestrator.get_watchlist", return_value=[]):
+                mock_sync.return_value = None
+                mock_cleanup.return_value = None
+                mock_orphan.return_value = None
+                await orc.run_coin_cycle()
+            mock_reconcile.assert_called_once()
 
         asyncio.run(run())
 
@@ -199,3 +230,96 @@ class TestRiskCaps:
             mock_buy.assert_not_called()
 
         asyncio.run(run())
+
+
+class TestManualHoldings:
+    def test_reconcile_manual_holdings_skips_closing_when_exchange_lookup_fails(self):
+        orc = make_orchestrator()
+
+        async def run():
+            with patch.object(orc.coin_executor, "get_all_coin_holdings_snapshot", return_value=(False, [])), \
+                 patch.object(orc, "_close_missing_manual_holdings") as mock_close, \
+                 patch.object(orc, "_upsert_manual_holding_record") as mock_upsert, \
+                 patch("backend.orchestrator.send_message") as mock_send:
+                await orc._reconcile_manual_holdings()
+
+            mock_close.assert_not_called()
+            mock_upsert.assert_not_called()
+            mock_send.assert_not_called()
+
+        asyncio.run(run())
+
+    def test_reconcile_manual_holdings_alerts_only_for_untracked_exchange_asset(self):
+        orc = make_orchestrator()
+        orc.settings.manual_holding_policy = "alert_only"
+
+        async def run():
+            with patch.object(orc.coin_executor, "get_all_coin_holdings_snapshot", return_value=(True, [
+                {
+                    "symbol": "KRW-SAND",
+                    "quantity": 100.0,
+                    "avg_buy_price": 1000.0,
+                    "current_price": 1100.0,
+                    "eval_value": 110000.0,
+                }
+            ])), \
+                 patch.object(orc, "_coin_position_symbols", return_value=set()), \
+                 patch.object(orc, "_load_manual_holding_record", return_value=None), \
+                 patch.object(orc, "_upsert_manual_holding_record") as mock_upsert, \
+                 patch.object(orc, "_import_manual_holding") as mock_import, \
+                 patch("backend.orchestrator.send_message") as mock_send:
+                await orc._reconcile_manual_holdings()
+
+            mock_import.assert_not_called()
+            mock_upsert.assert_called_once()
+            mock_send.assert_called_once()
+            assert "KRW-SAND" in mock_send.await_args.args[0]
+            assert "alert_only" in mock_send.await_args.args[0]
+
+        asyncio.run(run())
+
+    def test_reconcile_manual_holdings_imports_when_policy_is_import(self):
+        orc = make_orchestrator()
+        orc.settings.manual_holding_policy = "import"
+
+        async def run():
+            with patch.object(orc.coin_executor, "get_all_coin_holdings_snapshot", return_value=(True, [
+                {
+                    "symbol": "KRW-SAND",
+                    "quantity": 100.0,
+                    "avg_buy_price": 1000.0,
+                    "current_price": 1100.0,
+                    "eval_value": 110000.0,
+                }
+            ])), \
+                 patch.object(orc, "_coin_position_symbols", return_value=set()), \
+                 patch.object(orc, "_load_manual_holding_record", return_value=None), \
+                 patch.object(orc, "_upsert_manual_holding_record") as mock_upsert, \
+                 patch.object(orc, "_import_manual_holding", return_value=True) as mock_import, \
+                 patch("backend.orchestrator.send_message") as mock_send:
+                await orc._reconcile_manual_holdings()
+
+            mock_import.assert_called_once_with("KRW-SAND", quantity=100.0, entry_price=1000.0)
+            mock_upsert.assert_called_once()
+            assert mock_upsert.call_args.kwargs["status"] == "import"
+            mock_send.assert_called_once()
+            assert "편입" in mock_send.await_args.args[0]
+
+        asyncio.run(run())
+
+    def test_close_missing_manual_holdings_marks_closed(self):
+        orc = make_orchestrator()
+        mock_conn = MagicMock()
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+        mock_cur = MagicMock()
+        mock_conn.cursor.return_value = mock_cur
+
+        with patch("backend.orchestrator.get_db", return_value=mock_conn):
+            orc._close_missing_manual_holdings({"KRW-LINK"})
+
+        sql = mock_cur.execute.call_args.args[0]
+        params = mock_cur.execute.call_args.args[1]
+        assert "UPDATE manual_holdings" in sql
+        assert params == (["KRW-LINK"],)
+        assert mock_conn.commit.call_count == 1

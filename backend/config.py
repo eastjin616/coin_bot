@@ -68,6 +68,8 @@ class Settings(BaseSettings):
     loss_streak_threshold: int = 2
     loss_streak_cooldown_days: int = 7
     loss_streak_lookback_days: int = 30
+    manual_holding_policy: str = "alert_only"
+    manual_holding_min_value_krw: int = 10000
 
     # 운영 리스크 캡 (0이면 비활성화)
     max_open_positions: int = 12

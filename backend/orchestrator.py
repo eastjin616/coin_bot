@@ -143,8 +143,220 @@ class Orchestrator:
         except Exception:
             return False
 
+    def _coin_position_symbols(self) -> set[str]:
+        try:
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute("SELECT symbol FROM positions WHERE market = 'coin'")
+                return {row["symbol"] for row in cur.fetchall()}
+        except Exception as e:
+            logger.error("포지션 심볼 조회 실패: %s", e)
+            return set()
+
+    def _load_manual_holding_record(self, symbol: str) -> dict | None:
+        try:
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    """
+                    SELECT symbol, quantity, avg_buy_price, status, note, last_alerted_at
+                    FROM manual_holdings
+                    WHERE symbol = %s
+                    """,
+                    (symbol,),
+                )
+                return cur.fetchone()
+        except Exception as e:
+            logger.warning("수동 보유 추적 조회 실패 [%s]: %s", symbol, e)
+            return None
+
+    def _upsert_manual_holding_record(
+        self,
+        symbol: str,
+        *,
+        quantity: float,
+        avg_buy_price: float,
+        status: str,
+        note: str | None = None,
+        mark_alerted: bool = False,
+    ) -> None:
+        try:
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    """
+                    INSERT INTO manual_holdings (
+                        symbol, quantity, avg_buy_price, status, note, last_seen_at, last_alerted_at
+                    )
+                    VALUES (%s, %s, %s, %s, %s, NOW(), CASE WHEN %s THEN NOW() ELSE NULL END)
+                    ON CONFLICT (symbol)
+                    DO UPDATE SET
+                        quantity = EXCLUDED.quantity,
+                        avg_buy_price = EXCLUDED.avg_buy_price,
+                        status = EXCLUDED.status,
+                        note = EXCLUDED.note,
+                        last_seen_at = NOW(),
+                        last_alerted_at = CASE
+                            WHEN %s THEN NOW()
+                            ELSE manual_holdings.last_alerted_at
+                        END
+                    """,
+                    (symbol, quantity, avg_buy_price, status, note, mark_alerted, mark_alerted),
+                )
+                conn.commit()
+        except Exception as e:
+            logger.warning("수동 보유 추적 저장 실패 [%s]: %s", symbol, e)
+
+    def _import_manual_holding(self, symbol: str, *, quantity: float, entry_price: float) -> bool:
+        if quantity <= 0:
+            return False
+        entry_price = float(entry_price or 0.0)
+        if entry_price <= 0:
+            return False
+        try:
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    """
+                    INSERT INTO positions (market, symbol, entry_price, quantity, highest_price, source, imported_at)
+                    VALUES ('coin', %s, %s, %s, %s, 'manual_import', NOW())
+                    ON CONFLICT (market, symbol)
+                    DO UPDATE SET
+                        entry_price = EXCLUDED.entry_price,
+                        quantity = EXCLUDED.quantity,
+                        highest_price = GREATEST(
+                            COALESCE(positions.highest_price, positions.entry_price, 0),
+                            EXCLUDED.highest_price
+                        ),
+                        source = 'manual_import',
+                        imported_at = COALESCE(positions.imported_at, NOW())
+                    """,
+                    (symbol, entry_price, quantity, entry_price),
+                )
+                conn.commit()
+                return True
+        except Exception as e:
+            logger.error("수동 보유 포지션 편입 실패 [%s]: %s", symbol, e)
+            return False
+
+    async def _reconcile_manual_holdings(self):
+        """거래소 실보유 자산 중 DB 포지션에 없는 수동 매수 종목을 감지한다."""
+        try:
+            holdings_ok, exchange_holdings = self.coin_executor.get_all_coin_holdings_snapshot()
+            if not holdings_ok:
+                logger.warning("수동 보유 종목 정리 스킵: 거래소 잔고 조회 실패")
+                return
+            exchange_symbols = {row["symbol"] for row in exchange_holdings}
+            self._close_missing_manual_holdings(exchange_symbols)
+            if not exchange_holdings:
+                return
+
+            db_symbols = self._coin_position_symbols()
+            policy = str(getattr(self.settings, "manual_holding_policy", "alert_only") or "alert_only").strip().lower()
+            if policy not in {"alert_only", "import", "ignore"}:
+                policy = "alert_only"
+            min_value = float(getattr(self.settings, "manual_holding_min_value_krw", 10000) or 10000)
+
+            for holding in exchange_holdings:
+                symbol = holding["symbol"]
+                if symbol in db_symbols:
+                    continue
+
+                eval_value = float(holding.get("eval_value") or 0.0)
+                if eval_value < min_value:
+                    continue
+
+                quantity = float(holding.get("quantity") or 0.0)
+                avg_buy_price = float(holding.get("avg_buy_price") or 0.0)
+                current_price = float(holding.get("current_price") or avg_buy_price or 0.0)
+                prior = self._load_manual_holding_record(symbol)
+                changed = (
+                    prior is None
+                    or abs(float(prior.get("quantity") or 0.0) - quantity) > 1e-12
+                    or abs(float(prior.get("avg_buy_price") or 0.0) - avg_buy_price) > 1e-12
+                    or str(prior.get("status") or "") != policy
+                )
+
+                if policy == "ignore":
+                    self._upsert_manual_holding_record(
+                        symbol,
+                        quantity=quantity,
+                        avg_buy_price=avg_buy_price,
+                        status="ignore",
+                        note="manual holding ignored by policy",
+                    )
+                    continue
+
+                if policy == "import":
+                    imported = self._import_manual_holding(
+                        symbol,
+                        quantity=quantity,
+                        entry_price=avg_buy_price or current_price,
+                    )
+                    self._upsert_manual_holding_record(
+                        symbol,
+                        quantity=quantity,
+                        avg_buy_price=avg_buy_price,
+                        status="import" if imported else "alert_only",
+                        note="manual holding imported into positions" if imported else "manual holding import failed",
+                        mark_alerted=changed,
+                    )
+                    if imported and changed:
+                        await send_message(
+                            f"🧩 수동 보유 종목 편입\n\n"
+                            f"{symbol} {quantity:.6f}\n"
+                            f"평균단가: {avg_buy_price or current_price:,.0f}원\n"
+                            f"정책: import"
+                        )
+                    continue
+
+                self._upsert_manual_holding_record(
+                    symbol,
+                    quantity=quantity,
+                    avg_buy_price=avg_buy_price,
+                    status="alert_only",
+                    note="manual holding detected outside bot positions",
+                    mark_alerted=changed,
+                )
+                if changed:
+                    await send_message(
+                        f"👀 수동 보유 종목 감지\n\n"
+                        f"{symbol} {quantity:.6f}\n"
+                        f"평균단가: {avg_buy_price or current_price:,.0f}원\n"
+                        f"평가금액: {eval_value:,.0f}원\n"
+                        f"정책: alert_only (자동매매 미편입)"
+                    )
+        except Exception as e:
+            logger.error("수동 보유 종목 감지 오류: %s", e)
+
+    def _close_missing_manual_holdings(self, exchange_symbols: set[str]) -> None:
+        try:
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    """
+                    UPDATE manual_holdings
+                    SET
+                        status = 'closed',
+                        note = 'manual holding no longer present on exchange',
+                        last_seen_at = NOW()
+                    WHERE status <> 'closed'
+                      AND symbol <> ALL(%s)
+                    """,
+                    (sorted(exchange_symbols),),
+                )
+                conn.commit()
+        except Exception as e:
+            logger.warning("사라진 수동 보유 정리 실패: %s", e)
+
     def _estimate_total_equity_krw(self) -> float:
-        """KRW 잔고 + DB 포지션 원가 기준 추정 총자산."""
+        """KRW 잔고 + 거래소 실보유 평가금액 기준 총자산. 실패 시 DB 원가 기준으로 폴백."""
+        krw_balance = self.coin_executor.get_balance_krw()
+        holdings = self.coin_executor.get_all_coin_holdings()
+        if holdings:
+            invested = sum(float(row.get("eval_value") or 0.0) for row in holdings)
+            return krw_balance + invested
+
         try:
             with get_db() as conn:
                 cur = conn.cursor()
@@ -159,7 +371,7 @@ class Orchestrator:
             invested = float(row["invested_krw"] or 0) if row else 0.0
         except Exception:
             invested = 0.0
-        return self.coin_executor.get_balance_krw() + invested
+        return krw_balance + invested
 
     def _effective_max_open_positions(self) -> int:
         """설정 상한과 시드 기준 집중도 상한을 함께 반영."""
@@ -591,6 +803,26 @@ class Orchestrator:
             logger.error(f"고아 포지션 처리 오류: {e}")
 
     async def run_coin_cycle(self):
+        try:
+            exchange_symbols = {row["symbol"] for row in self.coin_executor.get_all_coin_holdings()}
+            backfill_symbols = sorted(exchange_symbols | self._coin_position_symbols() | set(get_active_buy_symbols().keys()))
+        except Exception:
+            backfill_symbols = sorted(self._coin_position_symbols() | set(get_active_buy_symbols().keys()))
+        try:
+            backfill_summary = self.coin_executor.backfill_recent_done_orders(backfill_symbols)
+            if backfill_summary["seeded"] > 0:
+                logger.info("주문 저널 백필 요약: %s", backfill_summary)
+        except Exception as e:
+            logger.error("주문 저널 백필 오류: %s", e)
+
+        try:
+            reconcile_summary = self.coin_executor.reconcile_open_order_journal()
+            if reconcile_summary["checked"] > 0:
+                logger.info("주문 저널 복구 요약: %s", reconcile_summary)
+        except Exception as e:
+            logger.error("주문 저널 복구 오류: %s", e)
+
+        await self._reconcile_manual_holdings()
         await self._sync_runtime_watchlist()
         await self._cleanup_zombie_positions()
         await self._sell_orphaned_positions()

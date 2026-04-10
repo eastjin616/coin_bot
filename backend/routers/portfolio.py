@@ -1,7 +1,7 @@
 import logging
 import pyupbit
 from fastapi import APIRouter
-from backend.execution.coin_executor import CoinExecutor
+from backend.execution.coin_executor import CoinExecutor, get_current_prices_safe
 from backend.config import get_settings
 
 router = APIRouter()
@@ -32,14 +32,7 @@ def get_portfolio():
         if b.get("currency") != "KRW" and float(b.get("balance", 0)) > 0
     ]
 
-    if coin_symbols:
-        try:
-            prices = pyupbit.get_current_price(coin_symbols) or {}
-        except Exception as e:
-            logger.error(f"현재가 조회 실패: {e}")
-            prices = {}
-    else:
-        prices = {}
+    prices = get_current_prices_safe(coin_symbols)
 
     for b in balances:
         currency = b.get("currency", "")
