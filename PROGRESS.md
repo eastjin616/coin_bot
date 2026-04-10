@@ -1,5 +1,58 @@
 # coin_bot 구현 현황
 
+## 2026-04-10: 주문 복구 저널 + 수동 보유 감지/편입 + 현재가 조회 안전화
+
+### 주문 실행 원자화 + 복구 저널 (`backend/database.py`, `backend/execution/coin_executor.py`)
+- `trades.order_uuid` 유니크 인덱스 추가
+- `positions(market, symbol)` 유니크 인덱스 추가
+- 체결 후 `trade` 저장과 `position` upsert/delete를 분리하지 않고 단일 반영 경로로 정리
+- `order_journal` 테이블 추가
+  - 주문 제출 직후 UUID와 요청 메타를 남김
+  - 다음 사이클에서 미완료 주문을 다시 읽어 `trade`/`position` 반영 복구
+- 최근 체결 주문 백필 추가
+  - local journal/trades에 없는 최근 `done` 주문 UUID를 복구 큐에 자동 적재
+
+### 수동 보유 종목 감지/정책화 (`backend/config.py`, `backend/database.py`, `backend/orchestrator.py`)
+- `manual_holdings` 테이블 추가
+  - 거래소 실보유인데 DB `positions`에 없는 종목을 추적
+- 정책 설정 추가
+  - `manual_holding_policy=alert_only|import|ignore`
+  - `manual_holding_min_value_krw`
+- 기본 정책은 `alert_only`
+  - 수동 매수 종목을 감지만 하고 자동매매 포지션으로는 편입하지 않음
+- 필요 시 `import` 정책으로 DB 포지션 편입 가능
+- 거래소 잔고 조회 실패 시에는 `manual_holdings`를 닫지 않도록 보호 로직 추가
+
+### 수동 편입 포지션 메타 (`backend/database.py`, `backend/orchestrator.py`)
+- `positions.source`, `positions.imported_at` 추가
+- 수동 편입 포지션은 `source='manual_import'`로 구분 가능
+- 중복 포지션이 있으면 병합 후 source/imported_at까지 보존하도록 마이그레이션 보강
+
+### 백필 손익 기준가 보강 (`backend/database.py`, `backend/execution/coin_executor.py`)
+- `order_journal.order_created_at` 추가
+- sell 백필 시 현재 포지션 가격을 재사용하지 않고
+  - 주문 생성 시각 이전 `trades` 이력을 재생해 평균 진입가 복원
+  - 그 값을 `entry_price_snapshot`과 손익 계산 기준으로 사용
+
+### 현재가 조회 안전화 (`backend/execution/coin_executor.py`, `backend/routers/portfolio.py`, `backend/ai/agent_tools.py`)
+- 지원되지 않는 심볼이 섞여도 전체 현재가 조회가 실패하지 않도록 `get_current_prices_safe()` 추가
+- KRW 지원 심볼만 조회하고, 배치 실패 대신 개별 조회로 폴백
+- 포트폴리오 API와 agent tool도 같은 helper를 재사용하도록 정리
+- EC2 실검증 결과 기존 `Code not found` 경고는 재현되지 않음
+
+### 실서버 검증
+- 대상: `ubuntu@43.203.205.237:/home/ubuntu/coin_bot`
+- 여러 차례 `rsync` 배포 후 `sudo systemctl restart coinbot`
+- 검증:
+  - `systemctl is-active coinbot` → `active`
+  - 주문 저널/수동 보유/포지션 메타 컬럼 반영 확인
+  - `KRW-SAND` 수동 보유 감지 → 이후 거래소 실보유 부재 확인 시 `manual_holdings.status='closed'` 로 정리됨
+  - 실보유 현재가 조회 경고(`Code not found`) 제거 확인
+
+### 테스트 / 검증
+- `PYTHONPATH=. pytest -q` → **83 passed**
+- `python -m compileall backend backtesting tests` 통과
+
 ## 2026-04-09: 소액 시드 집중 전략 + 런타임 유니버스 재선정 + EC2 배포
 
 ### 일봉 확정봉 기준 신호 정렬 (`backend/ai/chart_generator.py`, `backend/orchestrator.py`, `backend/database.py`)

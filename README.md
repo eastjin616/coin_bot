@@ -22,6 +22,8 @@ A fully automated cryptocurrency trading bot that runs 24/7 on AWS EC2. It monit
 - Dynamic position sizing: regime-aware base ratio with seed-aware concentration cap
 - Trailing-stop risk management aligned between runtime and backtester
 - Runtime buy universe narrowed to coins with relatively better realistic/OOS performance
+- Order execution journal + recovery loop to reduce post-fill/local-DB drift
+- Manual exchange holdings can be detected, alerted, or imported under policy control
 - Telegram bot for real-time trade alerts and portfolio status
 - Zombie position cleanup: auto-detects and removes stale DB entries
 
@@ -52,6 +54,8 @@ A fully automated cryptocurrency trading bot that runs 24/7 on AWS EC2. It monit
 │    │   PostgreSQL    │                                   │
 │    │  positions      │                                   │
 │    │  trades         │                                   │
+│    │  order_journal  │                                   │
+│    │  manual_holdings│                                   │
 │    └─────────────────┘                                   │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -194,6 +198,10 @@ The practical takeaway is that the bot should hold fewer simultaneous positions 
 
 - Per-coin **buy eligibility**, **RSI thresholds**, and **trailing-stop / stop-loss** percentages live in `backend/runtime_params.json`.
 - Override the file path with env **`RUNTIME_PARAMS_PATH`** (optional).
+- Manual exchange holdings policy is controlled by:
+  - `MANUAL_HOLDING_POLICY=alert_only|import|ignore`
+  - `MANUAL_HOLDING_MIN_VALUE_KRW`
+- Imported manual holdings are tracked in `positions.source='manual_import'`.
 - After research, merge universe flags and OOS metadata into that file (RSI/trailing unchanged) with:
 
 ```bash
@@ -250,6 +258,15 @@ Configure via environment / `config.py`:
 - **`min_order_amount_krw` / `max_order_amount_krw`** — 업비트 최소 주문/집중 매수 상한. `max_order_amount_krw=0`이면 상한 비활성화.
 
 Upbit market orders use short retries for submit and polling until the order reports fill or timeout.
+Submitted order UUIDs are also recorded in `order_journal`, and unfinished local persistence can be reconciled on later cycles.
+Recent done-order backfill exists to seed missing journal entries when local state lags behind exchange state.
+
+## Manual Holdings
+
+- Exchange holdings outside bot-managed DB positions are tracked in `manual_holdings`.
+- Default policy is `alert_only`: detect and notify, but do not auto-import into bot positions.
+- `import` can bring a manual holding into `positions` and mark it as `manual_import`.
+- Manual holdings are only auto-closed when exchange balance lookup succeeds and the symbol is truly absent.
 
 ## Regime Filter
 
