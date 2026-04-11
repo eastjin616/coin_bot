@@ -208,7 +208,7 @@ The practical takeaway is that the bot should hold fewer simultaneous positions 
 PYTHONPATH=. python -m backtesting.reselect_runtime --write-backend
 ```
 
-Restart the bot process after edits so the in-memory cache reloads.
+`backend/runtime_params.py` hot-reloads this file by mtime on the next read/cycle, so a bot restart is not required for ordinary file edits. The Telegram operator commands also force an immediate reload after writing `manual_override`.
 
 Runtime research snapshots can be written to:
 - `docs/superpowers/reports/YYYY-MM-DD-runtime-universe.md`
@@ -230,6 +230,12 @@ Current new-buy runtime universe is intentionally narrower, and the DB watchlist
 - `KRW-ADA`
 
 `KRW-BTC` is still used for regime detection, but is no longer eligible for new buys under the default runtime profile.
+
+Operators can override buy eligibility without deleting DB watchlist rows:
+- `/watchlist` shows the current buy-eligible / held-symbol set plus manual overrides
+- `/watchlist_remove BTC` writes `manual_override=disabled`
+- `/watchlist_add BTC` writes `manual_override=enabled`
+- `/list` shows the command summary again
 
 Selection is now score-based rather than threshold-only:
 - rank by realistic return, walk-forward OOS, recent OOS, trade count, and drawdown penalty
@@ -334,7 +340,7 @@ PYTHONPATH=. pytest -q
 ```
 
 Current local regression status:
-- `66 passed`
+- `89 passed`
 
 ---
 
