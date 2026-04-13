@@ -3,6 +3,8 @@ from dataclasses import dataclass
 
 import pandas as pd
 
+from backend.config import get_settings
+from backend.runtime_params import take_profit_percent
 from backtesting.data_fetcher import fetch_ohlcv
 from backtesting.simulator import run_backtest
 
@@ -21,6 +23,7 @@ ACTIVE_RUNTIME_SYMBOLS = [
 
 RSI_BUY_RANGE = [30, 35, 40, 45, 50]
 RSI_SELL_RANGE = [55, 60, 65, 70]
+TAKE_PROFIT_RANGE = [0.0, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0]
 TRAILING_ACTIVATION_RANGE = [1.5, 2.5, 3.5, 5.0]
 STOP_LOSS_RANGE = [3, 5, 7, 10]
 DATA_DAYS = 3000
@@ -39,6 +42,7 @@ RECENT_OOS_DAYS = 180
 class StrategyParams:
     rsi_buy: int
     rsi_sell: int
+    take_profit: float
     trailing_activation_percent: float
     stop_loss: int
 
@@ -52,14 +56,17 @@ def score_result(result: dict) -> tuple[float, float, float]:
     return (result["total_return_pct"], result["win_rate"], result["mdd"])
 
 
-def evaluate_params(df: pd.DataFrame, params: StrategyParams) -> dict:
+def evaluate_params(df: pd.DataFrame, params: StrategyParams, *, symbol: str | None = None) -> dict:
+    settings = get_settings()
     return run_backtest(
         df,
         rsi_buy=params.rsi_buy,
         rsi_sell=params.rsi_sell,
+        take_profit=params.take_profit if symbol else settings.take_profit_percent,
         stop_loss=params.stop_loss,
         trailing_activation_percent=params.trailing_activation_percent,
         use_trailing_stop=True,
+        weak_trend_rsi_buffer=settings.weak_trend_rsi_buffer,
         fee_rate=FEE_RATE,
         slippage_rate=SLIPPAGE_RATE,
     )
@@ -71,11 +78,12 @@ def optimize_rsi(symbol: str, df: pd.DataFrame) -> list[dict]:
         return []
 
     results = []
+    base_take_profit = take_profit_percent(symbol, get_settings().take_profit_percent)
     for rsi_buy, rsi_sell in itertools.product(RSI_BUY_RANGE, RSI_SELL_RANGE):
         if rsi_buy >= rsi_sell:
             continue
-        params = StrategyParams(rsi_buy, rsi_sell, 2.5, 5)
-        result = evaluate_params(df, params)
+        params = StrategyParams(rsi_buy, rsi_sell, base_take_profit, 2.5, 5)
+        result = evaluate_params(df, params, symbol=symbol)
         results.append({
             "symbol": symbol,
             "rsi_buy": rsi_buy,
@@ -101,13 +109,18 @@ def optimize_risk(symbol: str, df: pd.DataFrame, base_rsi: tuple[int, int] | Non
 
     rsi_buy, rsi_sell = base_rsi
     results = []
-    for trailing_activation, stop_loss in itertools.product(TRAILING_ACTIVATION_RANGE, STOP_LOSS_RANGE):
-        params = StrategyParams(rsi_buy, rsi_sell, trailing_activation, stop_loss)
-        result = evaluate_params(df, params)
+    for take_profit, trailing_activation, stop_loss in itertools.product(
+        TAKE_PROFIT_RANGE,
+        TRAILING_ACTIVATION_RANGE,
+        STOP_LOSS_RANGE,
+    ):
+        params = StrategyParams(rsi_buy, rsi_sell, take_profit, trailing_activation, stop_loss)
+        result = evaluate_params(df, params, symbol=symbol)
         results.append({
             "symbol": symbol,
             "rsi_buy": rsi_buy,
             "rsi_sell": rsi_sell,
+            "take_profit_percent": take_profit,
             "trailing_activation_percent": trailing_activation,
             "stop_loss": stop_loss,
             "return_pct": round(result["total_return_pct"], 2),
@@ -122,13 +135,33 @@ def optimize_full(symbol: str, df: pd.DataFrame) -> dict | None:
     if df.empty:
         return None
 
-    rsi_results = optimize_rsi(symbol, df)
-    if not rsi_results:
-        return None
+    results = []
+    for rsi_buy, rsi_sell in itertools.product(RSI_BUY_RANGE, RSI_SELL_RANGE):
+        if rsi_buy >= rsi_sell:
+            continue
+        for take_profit, trailing_activation, stop_loss in itertools.product(
+            TAKE_PROFIT_RANGE,
+            TRAILING_ACTIVATION_RANGE,
+            STOP_LOSS_RANGE,
+        ):
+            params = StrategyParams(rsi_buy, rsi_sell, take_profit, trailing_activation, stop_loss)
+            result = evaluate_params(df, params, symbol=symbol)
+            results.append({
+                "symbol": symbol,
+                "rsi_buy": rsi_buy,
+                "rsi_sell": rsi_sell,
+                "take_profit_percent": take_profit,
+                "trailing_activation_percent": trailing_activation,
+                "stop_loss": stop_loss,
+                "return_pct": round(result["total_return_pct"], 2),
+                "win_rate": round(result["win_rate"], 1),
+                "mdd": round(result["mdd"], 1),
+                "num_trades": result["num_trades"],
+            })
 
-    best_rsi = (rsi_results[0]["rsi_buy"], rsi_results[0]["rsi_sell"])
-    risk_results = optimize_risk(symbol, df, base_rsi=best_rsi)
-    return risk_results[0] if risk_results else None
+    if not results:
+        return None
+    return sorted(results, key=lambda item: (item["return_pct"], item["win_rate"], item["mdd"]), reverse=True)[0]
 
 
 def walk_forward_validate(symbol: str, df: pd.DataFrame) -> list[dict]:
@@ -148,11 +181,12 @@ def walk_forward_validate(symbol: str, df: pd.DataFrame) -> list[dict]:
         params = StrategyParams(
             best["rsi_buy"],
             best["rsi_sell"],
+            best["take_profit_percent"],
             best["trailing_activation_percent"],
             best["stop_loss"],
         )
-        train_result = evaluate_params(train_df, params)
-        test_result = evaluate_params(test_df, params)
+        train_result = evaluate_params(train_df, params, symbol=symbol)
+        test_result = evaluate_params(test_df, params, symbol=symbol)
         windows.append({
             "symbol": symbol,
             "train_start": train_df.index[0].date().isoformat(),
@@ -161,6 +195,7 @@ def walk_forward_validate(symbol: str, df: pd.DataFrame) -> list[dict]:
             "test_end": test_df.index[-1].date().isoformat(),
             "rsi_buy": params.rsi_buy,
             "rsi_sell": params.rsi_sell,
+            "take_profit_percent": params.take_profit,
             "trailing_activation_percent": params.trailing_activation_percent,
             "stop_loss": params.stop_loss,
             "train_return_pct": round(train_result["total_return_pct"], 2),
@@ -199,16 +234,18 @@ def recent_oos_check(symbol: str, df: pd.DataFrame) -> dict | None:
     params = StrategyParams(
         best["rsi_buy"],
         best["rsi_sell"],
+        best["take_profit_percent"],
         best["trailing_activation_percent"],
         best["stop_loss"],
     )
-    test_result = evaluate_params(test_df, params)
+    test_result = evaluate_params(test_df, params, symbol=symbol)
     return {
         "symbol": symbol,
         "test_start": test_df.index[0].date().isoformat(),
         "test_end": test_df.index[-1].date().isoformat(),
         "rsi_buy": params.rsi_buy,
         "rsi_sell": params.rsi_sell,
+        "take_profit_percent": params.take_profit,
         "trailing_activation_percent": params.trailing_activation_percent,
         "stop_loss": params.stop_loss,
         "return_pct": round(test_result["total_return_pct"], 2),
@@ -222,12 +259,12 @@ def print_full_report(results: list[dict]):
     print("\n" + "=" * 96)
     print(f"📈 현실화 백테스팅 리포트 (수수료 {FEE_RATE * 100:.02f}%, 슬리피지 {SLIPPAGE_RATE * 100:.02f}%)")
     print("=" * 96)
-    print(f"\n{'코인':<12} {'RSI':<9} {'활성화%':<9} {'손절%':<8} {'수익률':<10} {'승률':<8} {'MDD':<8} {'거래수'}")
+    print(f"\n{'코인':<12} {'RSI':<9} {'익절%':<8} {'활성화%':<9} {'손절%':<8} {'수익률':<10} {'승률':<8} {'MDD':<8} {'거래수'}")
     print("-" * 96)
     for result in results:
         emoji = "✅" if result["return_pct"] > 0 else "❌"
         print(
-            f"{emoji} {result['symbol'][4:]:<10} {result['rsi_buy']}/{result['rsi_sell']:<6} "
+            f"{emoji} {result['symbol'][4:]:<10} {result['rsi_buy']}/{result['rsi_sell']:<6} {result['take_profit_percent']:<8} "
             f"+{result['trailing_activation_percent']:<8} -{result['stop_loss']:<7} "
             f"{result['return_pct']:>+6.1f}%   {result['win_rate']:>5.1f}%   "
             f"{result['mdd']:>5.1f}%   {result['num_trades']}"
@@ -235,14 +272,13 @@ def print_full_report(results: list[dict]):
 
 
 def print_runtime_overrides(results: list[dict]):
-    print("\n📋 runtime `_PROFIT_STOP_OVERRIDES` 추천값:")
-    print("_PROFIT_STOP_OVERRIDES: dict[str, tuple[float, float]] = {")
+    print("\n📋 runtime 익절/트레일링 추천값:")
+    print("symbol: take_profit / trailing_activation / stop_loss")
     for result in results:
         print(
-            f'    "{result["symbol"]}": ({result["trailing_activation_percent"]}, {result["stop_loss"]}), '
-            f'# return {result["return_pct"]:+.1f}%, RSI {result["rsi_buy"]}/{result["rsi_sell"]}'
+            f'    "{result["symbol"]}": +{result["take_profit_percent"]} / +{result["trailing_activation_percent"]} / -{result["stop_loss"]}'
+            f'  # return {result["return_pct"]:+.1f}%, RSI {result["rsi_buy"]}/{result["rsi_sell"]}'
         )
-    print("}")
 
 
 def print_walk_forward_report(summaries: list[dict]):
@@ -264,12 +300,12 @@ def print_recent_oos_report(results: list[dict]):
     print("\n" + "=" * 96)
     print(f"📆 최근 {RECENT_OOS_DAYS}일 OOS 성능")
     print("=" * 96)
-    print(f"\n{'코인':<12} {'기간':<24} {'RSI':<9} {'활성화%':<9} {'손절%':<8} {'수익률':<10} {'MDD':<8}")
+    print(f"\n{'코인':<12} {'기간':<24} {'RSI':<9} {'익절%':<8} {'활성화%':<9} {'손절%':<8} {'수익률':<10} {'MDD':<8}")
     print("-" * 96)
     for result in results:
         period = f"{result['test_start']}~{result['test_end']}"
         print(
-            f"{result['symbol'][4:]:<12} {period:<24} {result['rsi_buy']}/{result['rsi_sell']:<6} "
+            f"{result['symbol'][4:]:<12} {period:<24} {result['rsi_buy']}/{result['rsi_sell']:<6} {result['take_profit_percent']:<8} "
             f"+{result['trailing_activation_percent']:<8} -{result['stop_loss']:<7} "
             f"{result['return_pct']:>+6.1f}%   {result['mdd']:>5.1f}%"
         )
@@ -322,7 +358,7 @@ if __name__ == "__main__":
             if results:
                 best = results[0]
                 print(
-                    f"{symbol}: 활성화 +{best['trailing_activation_percent']}% / "
+                    f"{symbol}: 익절 +{best['take_profit_percent']}% / 활성화 +{best['trailing_activation_percent']}% / "
                     f"손절 -{best['stop_loss']}% -> {best['return_pct']:+.1f}%"
                 )
     else:

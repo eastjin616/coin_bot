@@ -7,7 +7,13 @@ from backend.database import get_db
 from backend.ai.chart_generator import get_coin_indicators, get_coin_signal_indicators
 from backend.execution.coin_executor import CoinExecutor
 from backend.telegram_bot import send_trade_alert, send_disk_alert, send_weekly_report, send_daily_position_report, send_message
-from backend.runtime_params import get_active_buy_symbols, rsi_pair, runtime_selection_meta, trailing_stop_pair
+from backend.runtime_params import (
+    get_active_buy_symbols,
+    rsi_pair,
+    runtime_selection_meta,
+    take_profit_percent,
+    trailing_stop_pair,
+)
 from backend.risk_limits import count_coin_buys_kst_today, count_open_coin_positions
 from backend.runtime_status import get_market_regime, get_order_size_ratio_for_regime, is_risk_off_market
 
@@ -401,15 +407,24 @@ class Orchestrator:
     def _entry_score(self, symbol: str, indicators: dict) -> float:
         """소액 시드에서는 더 강한 RSI 신호와 검증 메타가 좋은 종목을 우선."""
         rsi = float(indicators.get("rsi") or 50)
+        buy_th = self._effective_buy_threshold(symbol, indicators)
+        oversold_depth = max(buy_th - rsi, 0.0)
+        meta = runtime_selection_meta().get(symbol, {})
+        effective_score = float(meta.get("effective_selection_score") or 0.0)
+        return oversold_depth + (effective_score * 0.15)
+
+    def _effective_buy_threshold(self, symbol: str, indicators: dict) -> float:
         buy_th, _ = rsi_pair(
             symbol,
             self.settings.rsi_buy_threshold,
             self.settings.rsi_sell_threshold,
         )
-        oversold_depth = max(buy_th - rsi, 0.0)
-        meta = runtime_selection_meta().get(symbol, {})
-        effective_score = float(meta.get("effective_selection_score") or 0.0)
-        return oversold_depth + (effective_score * 0.15)
+        ma5 = float(indicators.get("ma5") or 0.0)
+        ma20 = float(indicators.get("ma20") or 0.0)
+        weak_trend_buffer = float(getattr(self.settings, "weak_trend_rsi_buffer", 0.0) or 0.0)
+        if weak_trend_buffer > 0 and ma5 and ma20 and ma5 < ma20:
+            return max(buy_th - weak_trend_buffer, 0.0)
+        return buy_th
 
     def _has_processed_signal(self, market: str, symbol: str, action: str, candle_time) -> bool:
         if candle_time is None:
@@ -456,9 +471,8 @@ class Orchestrator:
         그 외: HOLD
         """
         rsi = indicators.get("rsi", 50)
-        ma5 = indicators.get("ma5", 0)
-        ma20 = indicators.get("ma20", 0)
-        buy_th, sell_th = rsi_pair(
+        buy_th = self._effective_buy_threshold(symbol, indicators)
+        _, sell_th = rsi_pair(
             symbol,
             self.settings.rsi_buy_threshold,
             self.settings.rsi_sell_threshold,
@@ -476,9 +490,9 @@ class Orchestrator:
         return "HOLD"
 
     def _check_profit_stop(self, symbol: str) -> tuple[str, str, float] | None:
-        """트레일링 스탑 + 손절 체크.
+        """고정 익절 + 트레일링 스탑 + 손절 체크.
         반환: (action, reason, highest_price) 또는 None
-        - reason: "trailing" | "stoploss"
+        - reason: "takeprofit" | "trailing" | "stoploss"
         - highest_price: 현재 최고가 (알림용)
         """
         try:
@@ -510,6 +524,14 @@ class Orchestrator:
             if change_pct <= -stop_loss:
                 logger.info(f"손절 [{symbol}]: {change_pct:.1f}% (기준: -{stop_loss}%)")
                 return ("SELL", "stoploss", highest_price)
+
+            take_profit = take_profit_percent(
+                symbol,
+                float(getattr(self.settings, "take_profit_percent", 0.0) or 0.0),
+            )
+            if take_profit > 0 and change_pct >= take_profit:
+                logger.info(f"고정 익절 [{symbol}]: {change_pct:.1f}% (기준: +{take_profit}%)")
+                return ("SELL", "takeprofit", highest_price)
 
             # 2. highest_price 갱신 (예외 발생 시 트레일링 스킵)
             try:
@@ -624,6 +646,12 @@ class Orchestrator:
                                 f"📉 트레일링 스탑 [{name or symbol}]\n"
                                 f"최고가: {highest_price_snapshot:,.0f}원 → 현재가: {price:,.0f}원 (-{trail_drop:.1f}%)\n"
                                 f"진입가: {entry_price:,.0f}원 | 손익: {pnl_pct:+.2f}% ({pnl_krw:+,.0f}원)"
+                            )
+                        elif reason == "takeprofit":
+                            await send_message(
+                                f"💸 소익절 [{name or symbol}]\n"
+                                f"진입가: {entry_price:,.0f}원 → 체결가: {price:,.0f}원\n"
+                                f"손익: {pnl_pct:+.2f}% ({pnl_krw:+,.0f}원)"
                             )
                         else:  # stoploss
                             await send_message(

@@ -64,7 +64,12 @@ A fully automated cryptocurrency trading bot that runs 24/7 on AWS EC2. It monit
 
 ## Strategy
 
-Pure RSI strategy on daily candles. No AI, no external signals — just technical indicators with per-coin parameters tuned via backtesting.
+Short-term tactical RSI strategy on daily candles. No AI, no external signals — just technical indicators with per-coin parameters tuned via backtesting.
+
+This runtime is no longer positioned as a long-term compounding system:
+- it prioritizes recent 180-day survivability over maximizing lifetime backtest return
+- it prefers lower drawdown and faster cash recovery to holding for large trend moves
+- per-symbol fixed take-profit can exit winning trades before trailing-stop activation
 
 For small seed accounts, the runtime now favors concentration over broad diversification:
 - new-buy universe is intentionally narrowed to the strongest core symbols
@@ -185,7 +190,7 @@ Grid search ranges:
 
 ## Recent OOS Snapshot
 
-Cached-data recent 180-day OOS results remain soft overall, so runtime now prefers concentration over broad exposure:
+Cached-data recent 180-day OOS results remain soft overall, so runtime now behaves like a tactical defense mode rather than a long-horizon compounding mode:
 - TRX `-0.6%`
 - BCH `-2.2%`
 - SOL `-3.0%`
@@ -253,6 +258,11 @@ Selection is now score-based rather than threshold-only:
 Other coins can still be held temporarily as existing positions. New entries are blocked, and the active watchlist is automatically aligned to:
 - the runtime buy universe
 - current held positions
+
+Per-symbol tactical exits are also stored in `backend/runtime_params.json`:
+- `take_profit_percent` controls early profit-taking before trailing-stop activation
+- `trailing_activation_percent` and `stop_loss_percent` still manage post-entry downside / pullback exits
+- current tactical defaults for the active trio are `LINK 4.0%`, `BCH 2.0%`, `ADA 0.0%`
 
 ## Risk caps (optional)
 

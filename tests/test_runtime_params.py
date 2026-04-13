@@ -16,6 +16,7 @@ def test_load_runtime_params_reloads_when_file_mtime_changes(tmp_path: Path, mon
                     "realistic_return_pct": 1.0,
                     "rsi_buy": 30,
                     "rsi_sell": 60,
+                    "take_profit_percent": 3.0,
                     "trailing_activation_percent": 1.5,
                     "stop_loss_percent": 5,
                 }
@@ -40,6 +41,7 @@ def test_load_runtime_params_reloads_when_file_mtime_changes(tmp_path: Path, mon
                     "realistic_return_pct": 1.0,
                     "rsi_buy": 30,
                     "rsi_sell": 60,
+                    "take_profit_percent": 3.0,
                     "trailing_activation_percent": 1.5,
                     "stop_loss_percent": 5,
                 }
@@ -64,6 +66,7 @@ def test_manual_override_disables_symbol(tmp_path: Path, monkeypatch):
                     "realistic_return_pct": 1.0,
                     "rsi_buy": 30,
                     "rsi_sell": 60,
+                    "take_profit_percent": 3.0,
                     "trailing_activation_percent": 1.5,
                     "stop_loss_percent": 5,
                 }
@@ -94,6 +97,7 @@ def test_manual_override_enabled_forces_symbol_on(tmp_path: Path, monkeypatch):
                     "realistic_return_pct": 1.0,
                     "rsi_buy": 30,
                     "rsi_sell": 60,
+                    "take_profit_percent": 3.0,
                     "trailing_activation_percent": 1.5,
                     "stop_loss_percent": 5,
                 }
@@ -109,3 +113,30 @@ def test_manual_override_enabled_forces_symbol_on(tmp_path: Path, monkeypatch):
     active = runtime_params.get_base_active_buy_symbols()
 
     assert active == {"KRW-TEST": "테스트"}
+
+
+def test_take_profit_percent_uses_symbol_override(tmp_path: Path, monkeypatch):
+    path = tmp_path / "runtime_params.json"
+    path.write_text(
+        json.dumps(
+            {
+                "KRW-TEST": {
+                    "name": "테스트",
+                    "enabled": True,
+                    "reason": "init",
+                    "realistic_return_pct": 1.0,
+                    "rsi_buy": 30,
+                    "rsi_sell": 60,
+                    "take_profit_percent": 4.5,
+                    "trailing_activation_percent": 1.5,
+                    "stop_loss_percent": 5,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("RUNTIME_PARAMS_PATH", str(path))
+    runtime_params._table = None
+    runtime_params._table_mtime_ns = None
+
+    assert runtime_params.take_profit_percent("KRW-TEST", 0.0) == 4.5

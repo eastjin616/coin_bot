@@ -13,7 +13,7 @@ def make_orchestrator():
         settings = MagicMock()
         settings.rsi_buy_threshold = 35.0
         settings.rsi_sell_threshold = 55.0
-        settings.take_profit_percent = 10.0
+        settings.take_profit_percent = 3.0
         settings.stop_loss_percent = 5.0
         settings.cooldown_minutes = 5
         settings.max_open_positions = 12
@@ -23,6 +23,7 @@ def make_orchestrator():
         settings.max_order_amount_krw = 50000
         settings.max_hold_days = 10
         settings.time_stop_min_pnl_pct = 0.0
+        settings.weak_trend_rsi_buffer = 7.0
         settings.manual_holding_policy = "alert_only"
         settings.manual_holding_min_value_krw = 10000
         mock_settings.return_value = settings
@@ -49,6 +50,10 @@ class TestGetSignal:
         with patch.object(self.orc, "_has_position", return_value=True):
             assert self.orc._get_signal("KRW-BTC", {"rsi": 34}) == "BUY"
             assert self.orc._get_signal("KRW-BTC", {"rsi": 66}) == "SELL"
+
+    def test_buy_requires_deeper_oversold_when_short_ma_is_below_long_ma(self):
+        assert self.orc._get_signal("KRW-SOL", {"rsi": 33, "ma5": 95, "ma20": 100}) == "HOLD"
+        assert self.orc._get_signal("KRW-SOL", {"rsi": 22, "ma5": 95, "ma20": 100}) == "BUY"
 
 
 class TestRuntimeFilters:

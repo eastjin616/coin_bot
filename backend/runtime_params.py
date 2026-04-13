@@ -22,6 +22,7 @@ _REQUIRED_ROW_KEYS = (
     "realistic_return_pct",
     "rsi_buy",
     "rsi_sell",
+    "take_profit_percent",
     "trailing_activation_percent",
     "stop_loss_percent",
 )
@@ -165,6 +166,13 @@ def trailing_stop_pair(
     if not row:
         return (default_activation, default_stop)
     return (float(row["trailing_activation_percent"]), float(row["stop_loss_percent"]))
+
+
+def take_profit_percent(symbol: str, default_take_profit: float) -> float:
+    row = symbol_table().get(symbol)
+    if not row:
+        return default_take_profit
+    return float(row["take_profit_percent"])
 
 
 def normalize_runtime_symbol(value: str) -> str:

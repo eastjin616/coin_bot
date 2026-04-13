@@ -26,6 +26,7 @@ def test_trailing_stop_exits_after_activation_and_pullback():
             df,
             rsi_buy=40,
             rsi_sell=90,
+            take_profit=0,
             stop_loss=5,
             use_trailing_stop=True,
         )
@@ -87,6 +88,23 @@ def test_time_stop_exits_after_max_hold_days_when_not_profitable():
     assert sells[0]["reason"] == "기간청산"
 
 
+def test_backtest_requires_deeper_oversold_in_weak_trend_before_buying():
+    df = make_df([100, 100, 100], [50, 38, 50])
+    df["ma_fast"] = [100, 95, 95]
+    df["ma_slow"] = [100, 100, 100]
+    with patch("backtesting.simulator.add_indicators", return_value=df):
+        result = run_backtest(
+            df,
+            rsi_buy=40,
+            rsi_sell=90,
+            stop_loss=20,
+            use_trailing_stop=False,
+            weak_trend_rsi_buffer=7,
+        )
+
+    assert result["trades"] == []
+
+
 def test_fee_and_slippage_reduce_performance():
     df = make_df([100, 95, 120, 120], [50, 30, 50, 50])
     with patch("backtesting.simulator.add_indicators", return_value=df):
@@ -94,6 +112,7 @@ def test_fee_and_slippage_reduce_performance():
             df,
             rsi_buy=40,
             rsi_sell=90,
+            take_profit=0,
             stop_loss=5,
             trailing_activation_percent=2.5,
             use_trailing_stop=True,
@@ -104,6 +123,7 @@ def test_fee_and_slippage_reduce_performance():
             df,
             rsi_buy=40,
             rsi_sell=90,
+            take_profit=0,
             stop_loss=5,
             trailing_activation_percent=2.5,
             use_trailing_stop=True,
@@ -112,6 +132,24 @@ def test_fee_and_slippage_reduce_performance():
         )
 
     assert with_cost["total_return_pct"] < no_cost["total_return_pct"]
+
+
+def test_take_profit_can_trigger_even_with_trailing_enabled():
+    df = make_df([100, 95, 99, 99], [50, 30, 45, 45])
+    with patch("backtesting.simulator.add_indicators", return_value=df):
+        result = run_backtest(
+            df,
+            rsi_buy=40,
+            rsi_sell=90,
+            take_profit=3,
+            stop_loss=5,
+            trailing_activation_percent=5,
+            use_trailing_stop=True,
+        )
+
+    sells = [trade for trade in result["trades"] if trade["type"] == "SELL"]
+    assert len(sells) == 1
+    assert sells[0]["reason"] == "익절"
 
 
 def test_walk_forward_summary_counts_positive_windows():

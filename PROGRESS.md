@@ -1,5 +1,36 @@
 # coin_bot 구현 현황
 
+## 2026-04-13: 단기 전술 모드 명시 + 종목별 익절 + 전술형 선발 점수
+
+### 종목별 고정 익절을 런타임 단일 소스로 통합 (`backend/runtime_params.json`, `backend/runtime_params.py`, `backend/orchestrator.py`)
+- 전역 `take_profit_percent` 의존을 줄이고 종목별 `take_profit_percent` 를 `runtime_params.json` 에 추가
+- 실운영 익절 판단은 이제 코인별 설정을 직접 읽음
+- 활성 유니버스 전술 기본값:
+  - `KRW-LINK`: `+4.0%`
+  - `KRW-BCH`: `+2.0%`
+  - `KRW-ADA`: `0.0%` (고정 익절 비활성)
+
+### 백테스터/리서치도 익절 축을 함께 최적화 (`backtesting/simulator.py`, `backtesting/optimize.py`)
+- `optimize_risk()` 가 이제 `take_profit + trailing_activation + stop_loss` 를 함께 탐색
+- 장기 최적화 결과는 활성 3종 기준 대체로 `take_profit=0` 쪽을 선호
+- 따라서 현재 런타임 값은 장기 누적 최대화가 아니라 최근 손실 방어를 위한 전술형 절충값임을 명확히 함
+
+### 런타임 유니버스 선발을 전술형으로 재정의 (`backtesting/reselect_runtime.py`)
+- `selection_score` 가 장기 현실화 수익보다 최근 OOS, 평균 OOS, 낮은 MDD를 더 강하게 반영하도록 변경
+- 최소 선발 기준도 최근 OOS / 평균 OOS 중심으로 강화
+- 리포트에 `short-term tactical` 모드 표시 추가
+
+### 문서 방향 정리
+- `README.md` 에 현재 전략을 “장기 복리형”이 아니라 “단기 전술형”으로 명시
+- 종목별 `take_profit_percent` 가 런타임 핵심 파라미터임을 문서화
+
+### 테스트 / 검증
+- `PYTHONPATH=. pytest -q` → **95 passed**
+
+### 남은 작업
+- 새 전술형 `selection_score` 공식을 현재 코드에는 반영했지만, `backend/runtime_params.json` 의 점수/사유 스냅샷은 아직 재생성 전이다.
+- 다음 세션에서 `recommend_runtime_universe(cache_only=True)` 또는 리포트 재생성 흐름을 다시 돌려 JSON 스냅샷을 갱신해야 한다.
+
 ## 2026-04-10: 주문 복구 저널 + 수동 보유 감지/편입 + 현재가 조회 안전화
 
 ### 주문 실행 원자화 + 복구 저널 (`backend/database.py`, `backend/execution/coin_executor.py`)

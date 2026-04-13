@@ -11,7 +11,7 @@ def make_orchestrator():
         settings = MagicMock()
         settings.rsi_buy_threshold = 35.0
         settings.rsi_sell_threshold = 55.0
-        settings.take_profit_percent = 10.0
+        settings.take_profit_percent = 3.0
         settings.stop_loss_percent = 5.0
         settings.cooldown_minutes = 5
         settings.max_hold_days = 10
@@ -57,7 +57,7 @@ class TestCheckProfitStop:
         symbol = "KRW-DOGE"  # stop_loss=5%
         entry_price = 100.0
         highest_price = 110.0  # 활성화 조건: 100 * (1 + 5/200) = 102.5 → 110 >= 102.5 ✓
-        current_price = 104.0  # 110 * (1 - 5/100) = 104.5 → 104 <= 104.5 ✓ 발동
+        current_price = 102.8  # +3% 익절 전, 110 * (1 - 5/100) = 104.5 → 102.8 <= 104.5 ✓ 발동
 
         with patch("backend.orchestrator.get_db") as mock_get_db, \
              patch("pyupbit.get_current_price", return_value=current_price):
@@ -72,6 +72,26 @@ class TestCheckProfitStop:
             result = self.orc._check_profit_stop(symbol)
 
         assert result is not None and result[0] == "SELL" and result[1] == "trailing"
+
+    def test_take_profit_triggers_before_trailing(self):
+        symbol = "KRW-DOGE"
+        entry_price = 100.0
+        highest_price = 102.0
+        current_price = 103.5  # +3.5% -> 고정 익절
+
+        with patch("backend.orchestrator.get_db") as mock_get_db, \
+             patch("pyupbit.get_current_price", return_value=current_price):
+            mock_conn = MagicMock()
+            mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+            mock_conn.__exit__ = MagicMock(return_value=False)
+            mock_cur = MagicMock()
+            mock_cur.fetchone.return_value = self._mock_db_row(entry_price, highest_price)
+            mock_conn.cursor.return_value = mock_cur
+            mock_get_db.return_value = mock_conn
+
+            result = self.orc._check_profit_stop(symbol)
+
+        assert result is not None and result[0] == "SELL" and result[1] == "takeprofit"
 
     # 케이스 3: 트레일링 미활성화 — 최고가가 활성화 임계값 미달
     def test_trailing_not_triggered_before_activation(self):

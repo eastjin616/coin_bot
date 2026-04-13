@@ -15,6 +15,7 @@ def run_backtest(
     use_trailing_stop: bool = False,
     max_hold_days: int | None = None,
     time_stop_min_pnl_pct: float = 0.0,
+    weak_trend_rsi_buffer: float = 7.0,
     fee_rate: float = 0.0005,
     slippage_rate: float = 0.0005,
 ) -> dict:
@@ -57,7 +58,7 @@ def run_backtest(
         rsi = row["rsi"]
         trailing_activation = trailing_activation_percent if trailing_activation_percent is not None else stop_loss / 2
 
-        # 손절 / 트레일링 스탑 / 고정 익절
+        # 손절 / 고정 익절 / 트레일링 스탑
         if position > 0 and entry_price > 0:
             holding_days += 1
             if price > highest_price:
@@ -72,12 +73,12 @@ def run_backtest(
             stop_reason = None
             if change_pct <= -stop_loss:
                 stop_reason = "손절"
+            elif take_profit > 0 and change_pct >= take_profit:
+                stop_reason = "익절"
             elif max_hold_days is not None and max_hold_days > 0 and holding_days >= max_hold_days and change_pct < time_stop_min_pnl_pct:
                 stop_reason = "기간청산"
             elif use_trailing_stop and highest_price >= activation_threshold and price <= trailing_trigger:
                 stop_reason = "트레일링"
-            elif not use_trailing_stop and change_pct >= take_profit:
-                stop_reason = "익절"
 
             if stop_reason:
                 cash += position * net_sell_price
@@ -94,7 +95,9 @@ def run_backtest(
                 continue
 
         # 매수 (일봉 전략: RSI만 사용)
-        if position == 0 and rsi < rsi_buy and cash >= order_amount:
+        weak_trend = row["ma_fast"] < row["ma_slow"]
+        buy_threshold = max(rsi_buy - weak_trend_rsi_buffer, 0.0) if weak_trend else rsi_buy
+        if position == 0 and rsi < buy_threshold and cash >= order_amount:
             buy_price = price * (1 + slippage_rate)
             qty = (order_amount * (1 - fee_rate)) / buy_price
             cash -= order_amount

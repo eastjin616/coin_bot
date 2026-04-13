@@ -26,6 +26,20 @@ def test_selection_score_rewards_robust_recent_candidates():
     assert score > weak_score
 
 
+def test_selection_score_prefers_recently_stable_candidate_over_stale_high_return():
+    tactical = selection_score(
+        {"return_pct": 6.0, "num_trades": 80, "mdd": -7.0},
+        {"avg_test_return_pct": 0.5, "windows": 6},
+        {"return_pct": -0.5},
+    )
+    stale = selection_score(
+        {"return_pct": 18.0, "num_trades": 80, "mdd": -18.0},
+        {"avg_test_return_pct": -1.0, "windows": 6},
+        {"return_pct": -5.5},
+    )
+    assert tactical > stale
+
+
 def test_recommend_runtime_universe_selects_top_n_candidates(monkeypatch):
     full_results = [
         {"symbol": "KRW-A", "return_pct": 15.0, "num_trades": 100, "mdd": -8.0},

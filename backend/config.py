@@ -56,9 +56,10 @@ class Settings(BaseSettings):
     max_order_amount_krw: int = 50000
     target_position_budget_krw: int = 50000
     stop_loss_percent: float = 5.0
-    take_profit_percent: float = 10.0
+    take_profit_percent: float = 0.0
     max_hold_days: int = 10
     time_stop_min_pnl_pct: float = 0.0
+    weak_trend_rsi_buffer: float = 7.0
     live_derating_enabled: bool = True
     live_derating_lookback_days: int = 30
     live_derating_min_sell_count: int = 3

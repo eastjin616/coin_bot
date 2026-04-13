@@ -9,31 +9,31 @@ from backtesting.optimize import run_research
 _BACKEND_PARAMS = Path(__file__).resolve().parent.parent / "backend" / "runtime_params.json"
 _REPORTS_DIR = Path(__file__).resolve().parent.parent / "docs" / "superpowers" / "reports"
 DEFAULT_TOP_N = 3
-MIN_REALISTIC_RETURN_PCT = 0.0
-MIN_AVG_WALK_OOS_PCT = -1.5
-MIN_RECENT_OOS_PCT = -8.0
+MIN_REALISTIC_RETURN_PCT = -5.0
+MIN_AVG_WALK_OOS_PCT = -1.0
+MIN_RECENT_OOS_PCT = -6.0
 MIN_WALK_WINDOWS = 3
 DEFAULT_MAX_SYMBOL_CHANGES = 2
 
 
 def selection_score(result: dict, walk: dict, oos: dict) -> float:
-    """Composite score for small-seed runtime universe selection."""
+    """Composite score for short-term tactical runtime universe selection."""
     realistic = float(result.get("return_pct") or 0.0)
     avg_oos = float(walk.get("avg_test_return_pct") or 0.0)
     recent_oos = oos.get("return_pct")
-    recent_component = float(recent_oos) if recent_oos is not None else -2.5
+    recent_component = float(recent_oos) if recent_oos is not None else -3.0
     windows = int(walk.get("windows") or 0)
     num_trades = int(result.get("num_trades") or 0)
     mdd = abs(float(result.get("mdd") or 0.0))
 
-    trade_bonus = min(num_trades, 150) / 50.0
-    window_bonus = min(windows, 12) * 0.25
-    drawdown_penalty = max(mdd - 10.0, 0.0) * 0.3
+    trade_bonus = min(num_trades, 120) / 60.0
+    window_bonus = min(windows, 12) * 0.2
+    drawdown_penalty = max(mdd - 8.0, 0.0) * 0.5
 
     return round(
-        realistic * 0.6
-        + avg_oos * 2.5
-        + recent_component * 1.5
+        realistic * 0.25
+        + avg_oos * 2.2
+        + recent_component * 3.0
         + trade_bonus
         + window_bonus
         - drawdown_penalty,
@@ -115,7 +115,7 @@ def recommend_runtime_universe(top_n: int = DEFAULT_TOP_N, *, cache_only: bool =
 
 
 def merge_recommendations_into_params(path: Path, recommendations: list[dict]) -> None:
-    """Update enabled/reason/OOS fields in backend/runtime_params.json; preserves rsi_* and trailing columns."""
+    """Update enabled/reason/OOS fields in backend/runtime_params.json; preserves RSI/take-profit/trailing columns."""
     with path.open(encoding="utf-8") as f:
         table = json.load(f)
     by_sym = {r["symbol"]: r for r in recommendations}
@@ -201,6 +201,8 @@ def render_runtime_report(recommendations: list[dict], top_n: int, *, auto_apply
         f"# Runtime Universe Report ({date.today().isoformat()})",
         "",
         f"Top-N setting: `{top_n}`",
+        "",
+        "Mode: `short-term tactical`",
         "",
         "## Enabled",
         "",
