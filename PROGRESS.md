@@ -28,8 +28,8 @@
 - `PYTHONPATH=. pytest -q` → **95 passed**
 
 ### 남은 작업
-- 새 전술형 `selection_score` 공식을 현재 코드에는 반영했지만, `backend/runtime_params.json` 의 점수/사유 스냅샷은 아직 재생성 전이다.
-- 다음 세션에서 `recommend_runtime_universe(cache_only=True)` 또는 리포트 재생성 흐름을 다시 돌려 JSON 스냅샷을 갱신해야 한다.
+- 런타임은 이제 `runtime_selection_meta()` 에서 전술형 점수를 즉시 재계산하므로, 오래된 `backend/runtime_params.json` 점수 스냅샷을 그대로 믿지 않는다.
+- 다만 `backend/runtime_params.json` 의 점수/사유 스냅샷 자체는 아직 재생성 전이므로, 다음 세션에서 리서치 배치를 다시 돌려 JSON과 리포트를 최신 scorer 기준으로 맞춰야 한다.
 
 ## 2026-04-10: 주문 복구 저널 + 수동 보유 감지/편입 + 현재가 조회 안전화
 

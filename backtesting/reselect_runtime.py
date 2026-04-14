@@ -4,6 +4,7 @@ import json
 from datetime import date
 from pathlib import Path
 
+from backend.runtime_params import runtime_tactical_score
 from backtesting.optimize import run_research
 
 _BACKEND_PARAMS = Path(__file__).resolve().parent.parent / "backend" / "runtime_params.json"
@@ -109,6 +110,51 @@ def recommend_runtime_universe(top_n: int = DEFAULT_TOP_N, *, cache_only: bool =
             item["reason"] = f"점수 기반 상위 {top_n} 선발 #{rank} (score {item['selection_score']:+.1f})"
         else:
             item["reason"] = f"상위 {top_n} 밖 또는 최소 기준 미달 (score {item['selection_score']:+.1f})"
+
+    recommendations.sort(key=lambda item: item["selection_score"], reverse=True)
+    return recommendations
+
+
+def recommend_runtime_universe_from_backend_snapshot(path: Path, top_n: int = DEFAULT_TOP_N) -> list[dict]:
+    with path.open(encoding="utf-8") as f:
+        table = json.load(f)
+
+    recommendations = []
+    for symbol, row in table.items():
+        realistic = float(row.get("realistic_return_pct") or 0.0)
+        avg_oos = float(row.get("avg_walk_forward_oos_pct") or 0.0)
+        recent_oos = row.get("recent_oos_pct")
+        score = runtime_tactical_score(row)
+        recommendations.append({
+            "symbol": symbol,
+            "realistic_return_pct": realistic,
+            "avg_walk_forward_oos_pct": avg_oos,
+            "recent_oos_pct": recent_oos,
+            "selection_score": score,
+            "num_trades": 0,
+            "walk_windows": MIN_WALK_WINDOWS,
+            "mdd": 0.0,
+        })
+
+    candidates = [
+        item for item in recommendations
+        if item["realistic_return_pct"] > MIN_REALISTIC_RETURN_PCT
+        and item["avg_walk_forward_oos_pct"] >= MIN_AVG_WALK_OOS_PCT
+        and (item["recent_oos_pct"] is None or float(item["recent_oos_pct"]) >= MIN_RECENT_OOS_PCT)
+    ]
+    selected_symbols = {
+        item["symbol"]
+        for item in sorted(candidates, key=lambda item: item["selection_score"], reverse=True)[:top_n]
+    }
+
+    ranked = sorted(candidates, key=lambda row: row["selection_score"], reverse=True)
+    for item in recommendations:
+        item["enabled"] = item["symbol"] in selected_symbols
+        if item["enabled"]:
+            rank = ranked.index(next(row for row in ranked if row["symbol"] == item["symbol"])) + 1
+            item["reason"] = f"전술형 스냅샷 상위 {top_n} 선발 #{rank} (score {item['selection_score']:+.1f})"
+        else:
+            item["reason"] = f"전술형 스냅샷 상위 {top_n} 밖 또는 최소 기준 미달 (score {item['selection_score']:+.1f})"
 
     recommendations.sort(key=lambda item: item["selection_score"], reverse=True)
     return recommendations
@@ -331,9 +377,17 @@ if __name__ == "__main__":
         action="store_true",
         help="Send auto-apply result summary to Telegram.",
     )
+    parser.add_argument(
+        "--refresh-from-backend-snapshot",
+        action="store_true",
+        help="Refresh selection_score/reason/enabled from existing backend/runtime_params.json metrics without rerunning research.",
+    )
     args = parser.parse_args()
 
-    recommendations = recommend_runtime_universe(top_n=args.top_n, cache_only=not args.allow_fetch)
+    if args.refresh_from_backend_snapshot:
+        recommendations = recommend_runtime_universe_from_backend_snapshot(_BACKEND_PARAMS, top_n=args.top_n)
+    else:
+        recommendations = recommend_runtime_universe(top_n=args.top_n, cache_only=not args.allow_fetch)
     print("runtime_params.json 후보 (enabled / score / realistic / walk OOS / recent OOS):")
     for item in recommendations:
         print(

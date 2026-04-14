@@ -2,7 +2,7 @@
   "KRW-BTC": {
     "name": "비트코인",
     "enabled": false,
-    "reason": "상위 3 밖 또는 최소 기준 미달 (score -6.3)",
+    "reason": "전술형 스냅샷 상위 3 밖 또는 최소 기준 미달 (score -15.7)",
     "realistic_return_pct": -4.91,
     "recent_oos_pct": -4.48,
     "rsi_buy": 35,
@@ -11,12 +11,12 @@
     "trailing_activation_percent": 1.5,
     "stop_loss_percent": 5,
     "avg_walk_forward_oos_pct": -0.46,
-    "selection_score": -6.296
+    "selection_score": -15.68
   },
   "KRW-SOL": {
     "name": "솔라나",
     "enabled": false,
-    "reason": "상위 3 밖 또는 최소 기준 미달 (score +0.1)",
+    "reason": "전술형 스냅샷 상위 3 밖 또는 최소 기준 미달 (score -9.0)",
     "realistic_return_pct": 6.17,
     "recent_oos_pct": -3.09,
     "rsi_buy": 30,
@@ -25,12 +25,12 @@
     "trailing_activation_percent": 2.5,
     "stop_loss_percent": 7,
     "avg_walk_forward_oos_pct": -0.58,
-    "selection_score": 0.147
+    "selection_score": -9.003
   },
   "KRW-DOGE": {
     "name": "도지코인",
     "enabled": false,
-    "reason": "상위 3 밖 또는 최소 기준 미달 (score -1.7)",
+    "reason": "전술형 스냅샷 상위 3 밖 또는 최소 기준 미달 (score -11.4)",
     "realistic_return_pct": 3.27,
     "recent_oos_pct": -3.72,
     "rsi_buy": 30,
@@ -39,12 +39,12 @@
     "trailing_activation_percent": 3.5,
     "stop_loss_percent": 5,
     "avg_walk_forward_oos_pct": -0.46,
-    "selection_score": -1.708
+    "selection_score": -11.354
   },
   "KRW-LINK": {
     "name": "체인링크",
-    "enabled": true,
-    "reason": "점수 기반 상위 3 선발 #2 (score +12.5)",
+    "enabled": false,
+    "reason": "전술형 스냅샷 상위 3 밖 또는 최소 기준 미달 (score -10.5)",
     "realistic_return_pct": 24.34,
     "recent_oos_pct": -6.57,
     "rsi_buy": 50,
@@ -53,12 +53,12 @@
     "trailing_activation_percent": 5.0,
     "stop_loss_percent": 10,
     "avg_walk_forward_oos_pct": 1.41,
-    "selection_score": 12.504
+    "selection_score": -10.523
   },
   "KRW-HBAR": {
     "name": "헤데라",
     "enabled": false,
-    "reason": "상위 3 밖 또는 최소 기준 미달 (score +0.9)",
+    "reason": "전술형 스냅샷 상위 3 밖 또는 최소 기준 미달 (score -20.3)",
     "realistic_return_pct": 16.44,
     "recent_oos_pct": -7.2,
     "rsi_buy": 45,
@@ -67,12 +67,12 @@
     "trailing_activation_percent": 1.5,
     "stop_loss_percent": 5,
     "avg_walk_forward_oos_pct": -1.26,
-    "selection_score": 0.864
+    "selection_score": -20.262
   },
   "KRW-UNI": {
     "name": "유니스왑",
     "enabled": false,
-    "reason": "상위 3 밖 또는 최소 기준 미달 (score +1.8)",
+    "reason": "전술형 스냅샷 상위 3 밖 또는 최소 기준 미달 (score -7.0)",
     "realistic_return_pct": 8.17,
     "recent_oos_pct": null,
     "rsi_buy": 30,
@@ -81,12 +81,12 @@
     "trailing_activation_percent": 1.5,
     "stop_loss_percent": 3,
     "avg_walk_forward_oos_pct": 0.0,
-    "selection_score": 1.792
+    "selection_score": -6.957
   },
   "KRW-BCH": {
     "name": "비트코인캐시",
     "enabled": true,
-    "reason": "점수 기반 상위 3 선발 #1 (score +16.3)",
+    "reason": "전술형 스냅샷 상위 3 선발 #1 (score -0.4)",
     "realistic_return_pct": 21.94,
     "recent_oos_pct": -2.46,
     "rsi_buy": 40,
@@ -95,12 +95,12 @@
     "trailing_activation_percent": 5.0,
     "stop_loss_percent": 7,
     "avg_walk_forward_oos_pct": 0.68,
-    "selection_score": 16.304
+    "selection_score": -0.399
   },
   "KRW-DOT": {
     "name": "폴카닷",
     "enabled": false,
-    "reason": "상위 3 밖 또는 최소 기준 미달 (score +1.7)",
+    "reason": "전술형 스냅샷 상위 3 밖 또는 최소 기준 미달 (score -5.7)",
     "realistic_return_pct": 3.92,
     "recent_oos_pct": -1.58,
     "rsi_buy": 30,
@@ -109,12 +109,12 @@
     "trailing_activation_percent": 5.0,
     "stop_loss_percent": 3,
     "avg_walk_forward_oos_pct": -0.88,
-    "selection_score": 1.652
+    "selection_score": -5.696
   },
   "KRW-ADA": {
     "name": "에이다",
     "enabled": true,
-    "reason": "점수 기반 상위 3 선발 #3 (score +8.8)",
+    "reason": "전술형 스냅샷 상위 3 선발 #3 (score -4.0)",
     "realistic_return_pct": 12.5,
     "recent_oos_pct": -1.78,
     "rsi_buy": 30,
@@ -123,12 +123,12 @@
     "trailing_activation_percent": 5.0,
     "stop_loss_percent": 3,
     "avg_walk_forward_oos_pct": -0.82,
-    "selection_score": 8.78
+    "selection_score": -4.019
   },
   "KRW-AVAX": {
     "name": "아발란체",
     "enabled": false,
-    "reason": "상위 3 밖 또는 최소 기준 미달 (score +1.2)",
+    "reason": "전술형 스냅샷 상위 3 밖 또는 최소 기준 미달 (score -5.1)",
     "realistic_return_pct": 0.87,
     "recent_oos_pct": -2.35,
     "rsi_buy": 30,
@@ -137,12 +137,12 @@
     "trailing_activation_percent": 3.5,
     "stop_loss_percent": 10,
     "avg_walk_forward_oos_pct": 0.81,
-    "selection_score": 1.162
+    "selection_score": -5.051
   },
   "KRW-TRX": {
     "name": "트론",
-    "enabled": false,
-    "reason": "상위 3 밖 또는 최소 기준 미달 (score +7.4)",
+    "enabled": true,
+    "reason": "전술형 스냅샷 상위 3 선발 #2 (score -0.5)",
     "realistic_return_pct": 6.79,
     "recent_oos_pct": -0.54,
     "rsi_buy": 40,
@@ -151,12 +151,12 @@
     "trailing_activation_percent": 5.0,
     "stop_loss_percent": 7,
     "avg_walk_forward_oos_pct": -0.26,
-    "selection_score": 7.374
+    "selection_score": -0.495
   },
   "KRW-SUI": {
     "name": "수이",
     "enabled": false,
-    "reason": "상위 3 밖 또는 최소 기준 미달 (score -4.5)",
+    "reason": "전술형 스냅샷 상위 3 밖 또는 최소 기준 미달 (score -16.0)",
     "realistic_return_pct": 11.73,
     "recent_oos_pct": -3.83,
     "rsi_buy": 50,
@@ -165,12 +165,12 @@
     "trailing_activation_percent": 1.5,
     "stop_loss_percent": 5,
     "avg_walk_forward_oos_pct": -3.39,
-    "selection_score": -4.492
+    "selection_score": -16.016
   },
   "KRW-ICP": {
     "name": "인터넷컴퓨터",
     "enabled": false,
-    "reason": "상위 3 밖 또는 최소 기준 미달 (score -3.3)",
+    "reason": "전술형 스냅샷 상위 3 밖 또는 최소 기준 미달 (score -8.8)",
     "realistic_return_pct": 0.7,
     "recent_oos_pct": null,
     "rsi_buy": 30,
@@ -179,12 +179,12 @@
     "trailing_activation_percent": 1.5,
     "stop_loss_percent": 3,
     "avg_walk_forward_oos_pct": 0.0,
-    "selection_score": -3.31
+    "selection_score": -8.825
   },
   "KRW-ATOM": {
     "name": "코스모스",
     "enabled": false,
-    "reason": "상위 3 밖 또는 최소 기준 미달 (score -4.1)",
+    "reason": "전술형 스냅샷 상위 3 밖 또는 최소 기준 미달 (score -13.8)",
     "realistic_return_pct": 2.07,
     "recent_oos_pct": -3.0,
     "rsi_buy": 30,
@@ -193,12 +193,12 @@
     "trailing_activation_percent": 3.5,
     "stop_loss_percent": 3,
     "avg_walk_forward_oos_pct": -2.4,
-    "selection_score": -4.078
+    "selection_score": -13.762
   },
   "KRW-SHIB": {
     "name": "시바이누",
     "enabled": false,
-    "reason": "상위 3 밖 또는 최소 기준 미달 (score -6.4)",
+    "reason": "전술형 스냅샷 상위 3 밖 또는 최소 기준 미달 (score -11.1)",
     "realistic_return_pct": -2.13,
     "recent_oos_pct": -2.49,
     "rsi_buy": 40,
@@ -207,6 +207,6 @@
     "trailing_activation_percent": 3.5,
     "stop_loss_percent": 5,
     "avg_walk_forward_oos_pct": -1.42,
-    "selection_score": -6.403
+    "selection_score": -11.127
   }
 }

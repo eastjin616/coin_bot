@@ -113,6 +113,19 @@ def get_active_buy_symbols() -> dict[str, str]:
     }
 
 
+def runtime_tactical_score(row: dict[str, Any]) -> float:
+    realistic = float(row.get("realistic_return_pct") or 0.0)
+    avg_oos = float(row.get("avg_walk_forward_oos_pct") or 0.0)
+    recent_oos = row.get("recent_oos_pct")
+    recent_component = float(recent_oos) if recent_oos is not None else -3.0
+    return round(
+        realistic * 0.25
+        + avg_oos * 2.2
+        + recent_component * 3.0,
+        3,
+    )
+
+
 def runtime_selection_meta() -> dict[str, dict[str, Any]]:
     """Subset of fields used by /api/runtime/status `selection` list."""
     derated = get_live_derated_symbols()
@@ -122,7 +135,11 @@ def runtime_selection_meta() -> dict[str, dict[str, Any]]:
     for sym, row in symbol_table().items():
         base_enabled = _base_enabled(row)
         effective_enabled = base_enabled and sym not in derated and sym not in streak_cooled
-        reason = str(row["reason"])
+        base_score = runtime_tactical_score(row)
+        reason = f"runtime-tactical-score {base_score:+.1f}"
+        snapshot_reason = str(row["reason"])
+        if snapshot_reason:
+            reason = f"{reason} | research-snapshot: {snapshot_reason}"
         override = _manual_override(row)
         if override:
             reason = f"{reason} | manual-override: {override}"
@@ -130,7 +147,6 @@ def runtime_selection_meta() -> dict[str, dict[str, Any]]:
             reason = f"{reason} | live-derated: {derated[sym]}"
         if sym in streak_cooled:
             reason = f"{reason} | streak-cooled: {streak_cooled[sym]}"
-        base_score = float(row.get("selection_score") or 0.0)
         live_adjustment = float(live_adjustments.get(sym) or 0.0)
         sel[sym] = {
             "name": row["name"],

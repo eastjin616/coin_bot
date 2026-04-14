@@ -5,6 +5,7 @@ from backtesting.reselect_runtime import (
     default_report_path,
     format_auto_apply_notification,
     maybe_auto_apply_runtime_params,
+    recommend_runtime_universe_from_backend_snapshot,
     recommend_runtime_universe,
     render_runtime_report,
     selection_score,
@@ -70,6 +71,28 @@ def test_recommend_runtime_universe_selects_top_n_candidates(monkeypatch):
 
     assert enabled == ["KRW-A", "KRW-B"]
     assert all("score" in row["reason"] for row in result)
+
+
+def test_recommend_runtime_universe_from_backend_snapshot_refreshes_scores(tmp_path: Path):
+    path = tmp_path / "runtime_params.json"
+    path.write_text(
+        """
+{
+  "KRW-A": {"name": "A", "enabled": true, "reason": "old", "realistic_return_pct": 10.0, "avg_walk_forward_oos_pct": 1.0, "recent_oos_pct": -1.0, "rsi_buy": 30, "rsi_sell": 60, "take_profit_percent": 3.0, "trailing_activation_percent": 1.5, "stop_loss_percent": 5},
+  "KRW-B": {"name": "B", "enabled": true, "reason": "old", "realistic_return_pct": 2.0, "avg_walk_forward_oos_pct": 0.0, "recent_oos_pct": -5.0, "rsi_buy": 30, "rsi_sell": 60, "take_profit_percent": 3.0, "trailing_activation_percent": 1.5, "stop_loss_percent": 5},
+  "KRW-C": {"name": "C", "enabled": false, "reason": "old", "realistic_return_pct": 1.0, "avg_walk_forward_oos_pct": -2.0, "recent_oos_pct": -7.0, "rsi_buy": 30, "rsi_sell": 60, "take_profit_percent": 3.0, "trailing_activation_percent": 1.5, "stop_loss_percent": 5}
+}
+""".strip(),
+        encoding="utf-8",
+    )
+
+    rows = recommend_runtime_universe_from_backend_snapshot(path, top_n=2)
+    by_symbol = {row["symbol"]: row for row in rows}
+
+    assert by_symbol["KRW-A"]["enabled"] is True
+    assert by_symbol["KRW-B"]["enabled"] is True
+    assert by_symbol["KRW-C"]["enabled"] is False
+    assert "전술형 스냅샷 상위 2 선발" in by_symbol["KRW-A"]["reason"]
 
 
 def test_render_runtime_report_includes_enabled_and_blocked_sections():
