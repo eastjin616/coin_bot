@@ -47,6 +47,154 @@ def recent_symbol_performance() -> dict[str, dict]:
     return out
 
 
+def runtime_managed_symbols() -> list[str]:
+    """Symbols currently tracked by runtime_params.json."""
+    try:
+        from backend.runtime_params import symbol_table
+
+        return sorted(symbol_table().keys())
+    except Exception as exc:
+        logger.warning("런타임 관리 종목 조회 실패: %s", exc)
+        return []
+
+
+def base_enabled_symbols() -> list[str]:
+    """Symbols currently base-enabled for runtime buys."""
+    try:
+        from backend.runtime_params import get_base_active_buy_symbols
+
+        return sorted(get_base_active_buy_symbols().keys())
+    except Exception as exc:
+        logger.warning("base-enabled 종목 조회 실패: %s", exc)
+        return []
+
+
+def window_performance(days: int, *, symbols: list[str] | None = None, label: str = "all") -> dict:
+    """Aggregate realized performance for a recent lookback window."""
+    if days <= 0:
+        raise ValueError("days must be positive")
+    symbol_filter = sorted(set(symbols or []))
+    if symbols is not None and not symbol_filter:
+        return {
+            "days": days,
+            "label": label,
+            "total_trades": 0,
+            "buy_count": 0,
+            "sell_count": 0,
+            "win_count": 0,
+            "win_rate": 0.0,
+            "realized_pnl_krw": 0.0,
+            "avg_pnl_pct": 0.0,
+            "top_winner": None,
+            "top_loser": None,
+        }
+
+    try:
+        with get_db() as conn:
+            cur = conn.cursor()
+            filter_sql = ""
+            params: list[object] = []
+            if symbol_filter:
+                filter_sql = " AND symbol = ANY(%s)"
+                params.append(symbol_filter)
+            cur.execute(
+                f"""
+                SELECT
+                    COUNT(*) AS total_trades,
+                    COUNT(*) FILTER (WHERE action = 'BUY') AS buy_count,
+                    COUNT(*) FILTER (WHERE action = 'SELL') AS sell_count,
+                    COUNT(*) FILTER (WHERE action = 'SELL' AND pnl_pct > 0) AS win_count,
+                    COALESCE(SUM(pnl_krw) FILTER (WHERE action = 'SELL'), 0) AS realized_pnl_krw,
+                    COALESCE(AVG(pnl_pct) FILTER (WHERE action = 'SELL'), 0) AS avg_pnl_pct
+                FROM trades
+                WHERE market = 'coin' AND executed_at >= NOW() - INTERVAL '{int(days)} days'
+                {filter_sql}
+                """,
+                params,
+            )
+            overall = cur.fetchone() or {}
+
+            cur.execute(
+                f"""
+                SELECT
+                    symbol,
+                    COUNT(*) FILTER (WHERE action = 'SELL') AS sell_count,
+                    COUNT(*) FILTER (WHERE action = 'SELL' AND pnl_pct > 0) AS win_count,
+                    COALESCE(SUM(pnl_krw) FILTER (WHERE action = 'SELL'), 0) AS realized_pnl_krw,
+                    COALESCE(AVG(pnl_pct) FILTER (WHERE action = 'SELL'), 0) AS avg_pnl_pct
+                FROM trades
+                WHERE market = 'coin' AND executed_at >= NOW() - INTERVAL '{int(days)} days'
+                {filter_sql}
+                GROUP BY symbol
+                ORDER BY realized_pnl_krw DESC, avg_pnl_pct DESC, symbol ASC
+                """,
+                params,
+            )
+            rows = cur.fetchall()
+    except Exception as exc:
+        logger.warning("최근 %s일 성과 조회 실패: %s", days, exc)
+        return {
+            "days": days,
+            "label": label,
+            "total_trades": 0,
+            "buy_count": 0,
+            "sell_count": 0,
+            "win_count": 0,
+            "win_rate": 0.0,
+            "realized_pnl_krw": 0.0,
+            "avg_pnl_pct": 0.0,
+            "top_winner": None,
+            "top_loser": None,
+        }
+
+    symbols = []
+    for row in rows:
+        sell_count = int(row["sell_count"] or 0)
+        win_count = int(row["win_count"] or 0)
+        symbols.append(
+            {
+                "symbol": row["symbol"],
+                "sell_count": sell_count,
+                "win_count": win_count,
+                "win_rate": round((win_count / sell_count * 100) if sell_count else 0.0, 1),
+                "realized_pnl_krw": round(float(row["realized_pnl_krw"] or 0.0), 2),
+                "avg_pnl_pct": round(float(row["avg_pnl_pct"] or 0.0), 2),
+            }
+        )
+
+    sell_count = int(overall["sell_count"] or 0)
+    win_count = int(overall["win_count"] or 0)
+    top_winner = next((row for row in symbols if row["realized_pnl_krw"] > 0), None)
+    top_loser = next((row for row in reversed(symbols) if row["realized_pnl_krw"] < 0), None)
+    return {
+        "days": days,
+        "label": label,
+        "total_trades": int(overall["total_trades"] or 0),
+        "buy_count": int(overall["buy_count"] or 0),
+        "sell_count": sell_count,
+        "win_count": win_count,
+        "win_rate": round((win_count / sell_count * 100) if sell_count else 0.0, 1),
+        "realized_pnl_krw": round(float(overall["realized_pnl_krw"] or 0.0), 2),
+        "avg_pnl_pct": round(float(overall["avg_pnl_pct"] or 0.0), 2),
+        "top_winner": top_winner,
+        "top_loser": top_loser,
+    }
+
+
+def multi_window_performance(days_list: list[int], *, symbols: list[str] | None = None, label: str = "all") -> list[dict]:
+    return [window_performance(days, symbols=symbols, label=label) for days in days_list]
+
+
+def runtime_managed_window_performance(days_list: list[int]) -> list[dict]:
+    symbols = runtime_managed_symbols()
+    return multi_window_performance(days_list, symbols=symbols, label="runtime-managed")
+
+
+def base_enabled_window_performance(days_list: list[int]) -> list[dict]:
+    symbols = base_enabled_symbols()
+    return multi_window_performance(days_list, symbols=symbols, label="base-enabled")
+
+
 def get_live_derated_symbols() -> dict[str, str]:
     """Symbols temporarily blocked for new buys due to weak recent live performance."""
     settings = get_settings()
@@ -57,14 +205,17 @@ def get_live_derated_symbols() -> dict[str, str]:
     min_sell_count = int(getattr(settings, "live_derating_min_sell_count", 3) or 3)
     min_win_rate = float(getattr(settings, "live_derating_min_win_rate_pct", 40.0) or 40.0)
     min_avg_pnl_pct = float(getattr(settings, "live_derating_min_avg_pnl_pct", -0.5) or -0.5)
+    min_realized_pnl = float(getattr(settings, "live_derating_min_realized_pnl_krw", 0.0) or 0.0)
 
     derated: dict[str, str] = {}
     for symbol, row in perf.items():
         if row["sell_count"] < min_sell_count:
             continue
-        if row["realized_pnl_krw"] >= 0:
-            continue
-        if row["win_rate"] >= min_win_rate and row["avg_pnl_pct"] >= min_avg_pnl_pct:
+        if (
+            row["win_rate"] >= min_win_rate
+            and row["avg_pnl_pct"] >= min_avg_pnl_pct
+            and row["realized_pnl_krw"] >= min_realized_pnl
+        ):
             continue
         derated[symbol] = (
             f"recent live underperformance: pnl {row['realized_pnl_krw']:+,.0f} KRW, "
@@ -82,6 +233,9 @@ def live_score_adjustments() -> dict[str, float]:
     settings = get_settings()
     perf = recent_symbol_performance()
     min_sell_count = int(getattr(settings, "live_derating_min_sell_count", 3) or 3)
+    min_win_rate = float(getattr(settings, "live_derating_min_win_rate_pct", 40.0) or 40.0)
+    min_avg_pnl_pct = float(getattr(settings, "live_derating_min_avg_pnl_pct", -0.5) or -0.5)
+    min_realized_pnl = float(getattr(settings, "live_derating_min_realized_pnl_krw", 0.0) or 0.0)
 
     adjustments: dict[str, float] = {}
     for symbol, row in perf.items():
@@ -89,10 +243,17 @@ def live_score_adjustments() -> dict[str, float]:
             adjustments[symbol] = 0.0
             continue
 
-        pnl_component = max(min(row["avg_pnl_pct"], 5.0), -5.0) * 0.8
-        win_component = (row["win_rate"] - 50.0) * 0.08
-        realized_component = max(min(row["realized_pnl_krw"] / 10000.0, 3.0), -3.0)
-        adjustments[symbol] = round(pnl_component + win_component + realized_component, 3)
+        pnl_component = max(min(row["avg_pnl_pct"], 4.0), -4.0) * 1.0
+        win_component = (row["win_rate"] - 50.0) * 0.12
+        realized_component = max(min(row["realized_pnl_krw"] / 10000.0, 4.0), -4.0)
+        underperf_penalty = 0.0
+        if (
+            row["win_rate"] < min_win_rate
+            or row["avg_pnl_pct"] < min_avg_pnl_pct
+            or row["realized_pnl_krw"] < min_realized_pnl
+        ):
+            underperf_penalty = -1.5
+        adjustments[symbol] = round(pnl_component + win_component + realized_component + underperf_penalty, 3)
 
     return adjustments
 

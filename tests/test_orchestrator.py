@@ -63,9 +63,9 @@ class TestRuntimeFilters:
     def test_buy_enabled_symbols_are_limited(self):
         assert self.orc._is_buy_enabled_symbol("KRW-BCH") is True
         assert self.orc._is_buy_enabled_symbol("KRW-ADA") is True
-        assert self.orc._is_buy_enabled_symbol("KRW-TRX") is True
+        assert self.orc._is_buy_enabled_symbol("KRW-LINK") is True
         assert self.orc._is_buy_enabled_symbol("KRW-BTC") is False
-        assert self.orc._is_buy_enabled_symbol("KRW-LINK") is False
+        assert self.orc._is_buy_enabled_symbol("KRW-TRX") is False
 
     def test_risk_off_requires_multiple_bearish_signals(self):
         indicators = {

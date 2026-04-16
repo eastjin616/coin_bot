@@ -5,6 +5,7 @@ from backtesting.reselect_runtime import (
     default_report_path,
     format_auto_apply_notification,
     maybe_auto_apply_runtime_params,
+    preferred_runtime_core_symbols,
     recommend_runtime_universe_from_backend_snapshot,
     recommend_runtime_universe,
     render_runtime_report,
@@ -65,6 +66,7 @@ def test_recommend_runtime_universe_selects_top_n_candidates(monkeypatch):
         "backtesting.reselect_runtime.run_research",
         lambda _symbols, cache_only=True: (full_results, walk_summaries, recent_oos),
     )
+    monkeypatch.setattr("backtesting.reselect_runtime.preferred_runtime_core_symbols", lambda path=None: set())
 
     result = recommend_runtime_universe(top_n=2)
     enabled = [row["symbol"] for row in result if row["enabled"]]
@@ -93,6 +95,58 @@ def test_recommend_runtime_universe_from_backend_snapshot_refreshes_scores(tmp_p
     assert by_symbol["KRW-B"]["enabled"] is True
     assert by_symbol["KRW-C"]["enabled"] is False
     assert "전술형 스냅샷 상위 2 선발" in by_symbol["KRW-A"]["reason"]
+
+
+def test_preferred_runtime_core_symbols_reads_core_bucket(tmp_path: Path):
+    path = tmp_path / "runtime_params.json"
+    path.write_text(
+        """
+{
+  "KRW-LINK": {"name": "LINK", "enabled": true, "reason": "old", "realistic_return_pct": 1.0, "rsi_buy": 30, "rsi_sell": 60, "take_profit_percent": 3.0, "trailing_activation_percent": 1.5, "stop_loss_percent": 5, "selection_bucket": "core"},
+  "KRW-BCH": {"name": "BCH", "enabled": true, "reason": "old", "realistic_return_pct": 1.0, "rsi_buy": 30, "rsi_sell": 60, "take_profit_percent": 3.0, "trailing_activation_percent": 1.5, "stop_loss_percent": 5},
+  "KRW-ADA": {"name": "ADA", "enabled": true, "reason": "old", "realistic_return_pct": 1.0, "rsi_buy": 30, "rsi_sell": 60, "take_profit_percent": 3.0, "trailing_activation_percent": 1.5, "stop_loss_percent": 5, "selection_bucket": "core"}
+}
+""".strip(),
+        encoding="utf-8",
+    )
+
+    assert preferred_runtime_core_symbols(path) == {"KRW-LINK", "KRW-ADA"}
+
+
+def test_recommend_runtime_universe_respects_preferred_core_guard(monkeypatch):
+    full_results = [
+        {"symbol": "KRW-LINK", "return_pct": 8.0, "num_trades": 50, "mdd": -8.0},
+        {"symbol": "KRW-BCH", "return_pct": 7.0, "num_trades": 50, "mdd": -8.0},
+        {"symbol": "KRW-ADA", "return_pct": 1.0, "num_trades": 50, "mdd": -8.0},
+        {"symbol": "KRW-TRX", "return_pct": 20.0, "num_trades": 50, "mdd": -8.0},
+    ]
+    walk_summaries = [
+        {"symbol": "KRW-LINK", "avg_test_return_pct": 0.6, "windows": 8},
+        {"symbol": "KRW-BCH", "avg_test_return_pct": 0.5, "windows": 8},
+        {"symbol": "KRW-ADA", "avg_test_return_pct": -1.5, "windows": 8},
+        {"symbol": "KRW-TRX", "avg_test_return_pct": 1.0, "windows": 8},
+    ]
+    recent_oos = [
+        {"symbol": "KRW-LINK", "return_pct": -1.0},
+        {"symbol": "KRW-BCH", "return_pct": -1.5},
+        {"symbol": "KRW-ADA", "return_pct": -2.0},
+        {"symbol": "KRW-TRX", "return_pct": -0.2},
+    ]
+
+    monkeypatch.setattr(
+        "backtesting.reselect_runtime.run_research",
+        lambda _symbols, cache_only=True: (full_results, walk_summaries, recent_oos),
+    )
+    monkeypatch.setattr(
+        "backtesting.reselect_runtime.preferred_runtime_core_symbols",
+        lambda path=None: {"KRW-LINK", "KRW-BCH", "KRW-ADA"},
+    )
+
+    result = recommend_runtime_universe(top_n=3)
+    enabled = [row["symbol"] for row in result if row["enabled"]]
+
+    assert enabled == ["KRW-LINK", "KRW-BCH", "KRW-ADA"]
+    assert any("전술 코어 밖 자동선발 제외" in row["reason"] for row in result if row["symbol"] == "KRW-TRX")
 
 
 def test_render_runtime_report_includes_enabled_and_blocked_sections():

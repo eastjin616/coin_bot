@@ -909,8 +909,8 @@ class Orchestrator:
         self.scheduler.add_job(self.run_coin_cycle, "interval", seconds=interval, id="coin_cycle")
         # 매시간 디스크 체크
         self.scheduler.add_job(send_disk_alert, "interval", hours=1, id="disk_check")
-        # 매주 월요일 오전 9시 KST 주간 리포트
-        self.scheduler.add_job(send_weekly_report, "cron", day_of_week="mon", hour=9, minute=0, timezone=kst, id="weekly_report")
+        # 매일 오전 9시 5분 KST 최근 7/14/30일 성과 리포트
+        self.scheduler.add_job(send_weekly_report, "cron", hour=9, minute=5, timezone=kst, id="weekly_report")
         # 매일 오전 9시 KST 일일 포지션 현황
         self.scheduler.add_job(send_daily_position_report, "cron", hour=9, minute=0, timezone=kst, id="daily_report")
         self.scheduler.start()

@@ -62,12 +62,13 @@ class Settings(BaseSettings):
     weak_trend_rsi_buffer: float = 7.0
     live_derating_enabled: bool = True
     live_derating_lookback_days: int = 30
-    live_derating_min_sell_count: int = 3
-    live_derating_min_win_rate_pct: float = 40.0
-    live_derating_min_avg_pnl_pct: float = -0.5
+    live_derating_min_sell_count: int = 2
+    live_derating_min_win_rate_pct: float = 50.0
+    live_derating_min_avg_pnl_pct: float = 0.0
+    live_derating_min_realized_pnl_krw: float = 0.0
     loss_streak_cooldown_enabled: bool = True
     loss_streak_threshold: int = 2
-    loss_streak_cooldown_days: int = 7
+    loss_streak_cooldown_days: int = 10
     loss_streak_lookback_days: int = 30
     manual_holding_policy: str = "alert_only"
     manual_holding_min_value_krw: int = 10000

@@ -1,7 +1,13 @@
 import json
 from unittest.mock import patch
 
-from backend.live_performance import live_score_adjustments
+from backend.live_performance import (
+    base_enabled_window_performance,
+    get_live_derated_symbols,
+    live_score_adjustments,
+    runtime_managed_window_performance,
+    window_performance,
+)
 from backend.runtime_params import get_active_buy_symbols, runtime_selection_meta
 
 
@@ -107,6 +113,31 @@ def test_live_score_adjustments_reward_positive_recent_results():
     assert adjustments["KRW-ADA"] < 0
 
 
+def test_get_live_derated_symbols_blocks_low_win_rate_even_with_small_profit(monkeypatch):
+    monkeypatch.setattr(
+        "backend.live_performance.recent_symbol_performance",
+        lambda: {
+            "KRW-LINK": {
+                "sell_count": 2,
+                "win_rate": 0.0,
+                "realized_pnl_krw": 1000.0,
+                "avg_pnl_pct": 0.1,
+            },
+            "KRW-BCH": {
+                "sell_count": 2,
+                "win_rate": 50.0,
+                "realized_pnl_krw": 2000.0,
+                "avg_pnl_pct": 0.2,
+            },
+        },
+    )
+
+    derated = get_live_derated_symbols()
+
+    assert "KRW-LINK" in derated
+    assert "KRW-BCH" not in derated
+
+
 def test_runtime_selection_meta_exposes_effective_selection_score():
     with patch("backend.runtime_params.get_live_derated_symbols", return_value={}), \
          patch("backend.runtime_params.live_score_adjustments", return_value={"KRW-LINK": 1.5}):
@@ -153,3 +184,31 @@ def test_runtime_selection_meta_recomputes_tactical_score_from_row_metrics(tmp_p
 
     assert meta["KRW-TEST"]["selection_score"] == 1.7
     assert "runtime-tactical-score +1.7" in meta["KRW-TEST"]["reason"]
+
+
+def test_window_performance_handles_db_failure():
+    with patch("backend.live_performance.get_db", side_effect=RuntimeError("db down")):
+        summary = window_performance(7)
+
+    assert summary["days"] == 7
+    assert summary["realized_pnl_krw"] == 0.0
+    assert summary["top_winner"] is None
+    assert summary["top_loser"] is None
+
+
+def test_runtime_managed_window_performance_passes_runtime_symbols():
+    with patch("backend.live_performance.runtime_managed_symbols", return_value=["KRW-BCH", "KRW-LINK"]), \
+         patch("backend.live_performance.multi_window_performance", return_value=[{"days": 7}]) as mock_multi:
+        result = runtime_managed_window_performance([7])
+
+    assert result == [{"days": 7}]
+    mock_multi.assert_called_once_with([7], symbols=["KRW-BCH", "KRW-LINK"], label="runtime-managed")
+
+
+def test_base_enabled_window_performance_passes_base_enabled_symbols():
+    with patch("backend.live_performance.base_enabled_symbols", return_value=["KRW-BCH", "KRW-ADA"]), \
+         patch("backend.live_performance.multi_window_performance", return_value=[{"days": 14}]) as mock_multi:
+        result = base_enabled_window_performance([14])
+
+    assert result == [{"days": 14}]
+    mock_multi.assert_called_once_with([14], symbols=["KRW-BCH", "KRW-ADA"], label="base-enabled")

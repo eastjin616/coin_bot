@@ -17,6 +17,23 @@ MIN_WALK_WINDOWS = 3
 DEFAULT_MAX_SYMBOL_CHANGES = 2
 
 
+def preferred_runtime_core_symbols(path: Path | None = None) -> set[str]:
+    """Symbols that automatic reselection should keep inside by default."""
+    path = path or _BACKEND_PARAMS
+    if not path.is_file():
+        return set()
+    try:
+        with path.open(encoding="utf-8") as f:
+            table = json.load(f)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return set()
+    return {
+        symbol
+        for symbol, row in table.items()
+        if str(row.get("selection_bucket") or "").strip().lower() == "core"
+    }
+
+
 def selection_score(result: dict, walk: dict, oos: dict) -> float:
     """Composite score for short-term tactical runtime universe selection."""
     realistic = float(result.get("return_pct") or 0.0)
@@ -55,6 +72,47 @@ def is_selection_candidate(result: dict, walk: dict, oos: dict) -> bool:
     )
 
 
+def _select_symbols(
+    recommendations: list[dict],
+    *,
+    top_n: int,
+    preferred_symbols: set[str] | None = None,
+) -> tuple[set[str], set[str]]:
+    preferred_symbols = set(preferred_symbols or ())
+    candidate_symbols = {
+        item["symbol"]
+        for item in recommendations
+        if is_selection_candidate(
+            {
+                "return_pct": item["realistic_return_pct"],
+                "num_trades": item["num_trades"],
+                "mdd": item["mdd"],
+            },
+            {"avg_test_return_pct": item["avg_walk_forward_oos_pct"], "windows": item["walk_windows"]},
+            {"return_pct": item["recent_oos_pct"]},
+        )
+    }
+    ranked = sorted(recommendations, key=lambda item: item["selection_score"], reverse=True)
+    if not preferred_symbols:
+        selected = [item["symbol"] for item in ranked if item["symbol"] in candidate_symbols][:top_n]
+        return set(selected), candidate_symbols
+
+    ranked_preferred = [item for item in ranked if item["symbol"] in preferred_symbols]
+    selected: list[str] = [
+        item["symbol"]
+        for item in ranked_preferred
+        if item["symbol"] in candidate_symbols
+    ][:top_n]
+    if len(selected) < top_n:
+        for item in ranked_preferred:
+            if item["symbol"] in selected:
+                continue
+            selected.append(item["symbol"])
+            if len(selected) >= top_n:
+                break
+    return set(selected), candidate_symbols
+
+
 def recommend_runtime_universe(top_n: int = DEFAULT_TOP_N, *, cache_only: bool = True) -> list[dict]:
     full_results, walk_summaries, recent_oos_results = run_research([
         "KRW-BTC", "KRW-SOL", "KRW-DOGE", "KRW-DOT", "KRW-ADA",
@@ -85,31 +143,34 @@ def recommend_runtime_universe(top_n: int = DEFAULT_TOP_N, *, cache_only: bool =
             "mdd": result.get("mdd", 0.0),
         })
 
-    candidates = [item for item in recommendations if is_selection_candidate(
-        {
-            "return_pct": item["realistic_return_pct"],
-            "num_trades": item["num_trades"],
-            "mdd": item["mdd"],
-        },
-        {"avg_test_return_pct": item["avg_walk_forward_oos_pct"], "windows": item["walk_windows"]},
-        {"return_pct": item["recent_oos_pct"]},
-    )]
-    selected_symbols = {
+    preferred_symbols = preferred_runtime_core_symbols()
+    selected_symbols, candidate_symbols = _select_symbols(
+        recommendations,
+        top_n=top_n,
+        preferred_symbols=preferred_symbols,
+    )
+    ranked_selected = [
         item["symbol"]
-        for item in sorted(candidates, key=lambda item: item["selection_score"], reverse=True)[:top_n]
-    }
+        for item in sorted(recommendations, key=lambda row: row["selection_score"], reverse=True)
+        if item["symbol"] in selected_symbols
+    ]
 
     for item in recommendations:
         item["enabled"] = item["symbol"] in selected_symbols
         if item["enabled"]:
-            rank = (
-                sorted(candidates, key=lambda row: row["selection_score"], reverse=True)
-                .index(next(row for row in candidates if row["symbol"] == item["symbol"]))
-                + 1
-            )
-            item["reason"] = f"점수 기반 상위 {top_n} 선발 #{rank} (score {item['selection_score']:+.1f})"
+            rank = ranked_selected.index(item["symbol"]) + 1
+            if preferred_symbols:
+                if item["symbol"] in candidate_symbols:
+                    item["reason"] = f"전술 코어 우선 선발 #{rank} (score {item['selection_score']:+.1f})"
+                else:
+                    item["reason"] = f"전술 코어 보강 선발 #{rank} (score {item['selection_score']:+.1f})"
+            else:
+                item["reason"] = f"점수 기반 상위 {top_n} 선발 #{rank} (score {item['selection_score']:+.1f})"
         else:
-            item["reason"] = f"상위 {top_n} 밖 또는 최소 기준 미달 (score {item['selection_score']:+.1f})"
+            if preferred_symbols and item["symbol"] not in preferred_symbols:
+                item["reason"] = f"전술 코어 밖 자동선발 제외 (score {item['selection_score']:+.1f})"
+            else:
+                item["reason"] = f"상위 {top_n} 밖 또는 최소 기준 미달 (score {item['selection_score']:+.1f})"
 
     recommendations.sort(key=lambda item: item["selection_score"], reverse=True)
     return recommendations
@@ -136,25 +197,33 @@ def recommend_runtime_universe_from_backend_snapshot(path: Path, top_n: int = DE
             "mdd": 0.0,
         })
 
-    candidates = [
-        item for item in recommendations
-        if item["realistic_return_pct"] > MIN_REALISTIC_RETURN_PCT
-        and item["avg_walk_forward_oos_pct"] >= MIN_AVG_WALK_OOS_PCT
-        and (item["recent_oos_pct"] is None or float(item["recent_oos_pct"]) >= MIN_RECENT_OOS_PCT)
-    ]
-    selected_symbols = {
+    preferred_symbols = preferred_runtime_core_symbols(path)
+    selected_symbols, candidate_symbols = _select_symbols(
+        recommendations,
+        top_n=top_n,
+        preferred_symbols=preferred_symbols,
+    )
+    ranked = [
         item["symbol"]
-        for item in sorted(candidates, key=lambda item: item["selection_score"], reverse=True)[:top_n]
-    }
-
-    ranked = sorted(candidates, key=lambda row: row["selection_score"], reverse=True)
+        for item in sorted(recommendations, key=lambda row: row["selection_score"], reverse=True)
+        if item["symbol"] in selected_symbols
+    ]
     for item in recommendations:
         item["enabled"] = item["symbol"] in selected_symbols
         if item["enabled"]:
-            rank = ranked.index(next(row for row in ranked if row["symbol"] == item["symbol"])) + 1
-            item["reason"] = f"전술형 스냅샷 상위 {top_n} 선발 #{rank} (score {item['selection_score']:+.1f})"
+            rank = ranked.index(item["symbol"]) + 1
+            if preferred_symbols:
+                if item["symbol"] in candidate_symbols:
+                    item["reason"] = f"전술 코어 우선 선발 #{rank} (score {item['selection_score']:+.1f})"
+                else:
+                    item["reason"] = f"전술 코어 보강 선발 #{rank} (score {item['selection_score']:+.1f})"
+            else:
+                item["reason"] = f"전술형 스냅샷 상위 {top_n} 선발 #{rank} (score {item['selection_score']:+.1f})"
         else:
-            item["reason"] = f"전술형 스냅샷 상위 {top_n} 밖 또는 최소 기준 미달 (score {item['selection_score']:+.1f})"
+            if preferred_symbols and item["symbol"] not in preferred_symbols:
+                item["reason"] = f"전술 코어 밖 자동선발 제외 (score {item['selection_score']:+.1f})"
+            else:
+                item["reason"] = f"전술형 스냅샷 상위 {top_n} 밖 또는 최소 기준 미달 (score {item['selection_score']:+.1f})"
 
     recommendations.sort(key=lambda item: item["selection_score"], reverse=True)
     return recommendations
@@ -242,6 +311,7 @@ def default_report_path(today: date | None = None) -> Path:
 def render_runtime_report(recommendations: list[dict], top_n: int, *, auto_apply_summary: dict | None = None) -> str:
     enabled = [item for item in recommendations if item["enabled"]]
     blocked = [item for item in recommendations if not item["enabled"]]
+    preferred_symbols = sorted(preferred_runtime_core_symbols())
 
     lines = [
         f"# Runtime Universe Report ({date.today().isoformat()})",
@@ -249,12 +319,19 @@ def render_runtime_report(recommendations: list[dict], top_n: int, *, auto_apply
         f"Top-N setting: `{top_n}`",
         "",
         "Mode: `short-term tactical`",
+    ]
+    if preferred_symbols:
+        lines.extend([
+            "",
+            f"Preferred core: `{', '.join(preferred_symbols)}`",
+        ])
+    lines.extend([
         "",
         "## Enabled",
         "",
         "| Rank | Symbol | Score | Realistic | Walk OOS | Recent OOS | Reason |",
         "| --- | --- | --- | --- | --- | --- | --- |",
-    ]
+    ])
     for rank, item in enumerate(enabled, start=1):
         recent = item["recent_oos_pct"]
         recent_str = "n/a" if recent is None else f"{recent:+.2f}%"

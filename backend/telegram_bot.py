@@ -3,6 +3,7 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 from backend.config import get_settings
 from backend.database import get_db
+from backend.live_performance import base_enabled_window_performance, runtime_managed_window_performance
 from backend.runtime_params import normalize_runtime_symbol, set_symbol_manual_override
 from backend.runtime_status import get_runtime_status
 
@@ -20,6 +21,7 @@ def _command_help_text() -> str:
         "안녕하세요! AI 자동매매 봇입니다. 🤖\n\n"
         "/balance - 현재 보유 포지션 조회\n"
         "/status - 실시간 RSI + 미실현 손익\n"
+        "/performance - 최근 7/14/30일 실현 성과 요약\n"
         "/watchlist - 현재 신규매수 허용/보유 관리 종목 조회\n"
         "/watchlist_remove BTC - 해당 심볼 신규매수 제외\n"
         "/watchlist_add BTC - 해당 심볼 신규매수 허용\n"
@@ -81,6 +83,42 @@ def _stateboard_summary(selection: list[dict], limit: int = 5) -> str | None:
         for row in rows[:limit]
     )
     return f"상태판: {summary}"
+
+
+def _format_symbol_performance_row(prefix: str, row: dict | None) -> str:
+    if not row:
+        return f"{prefix}: 없음"
+    return (
+        f"{prefix}: {row['symbol'].split('-')[1]} "
+        f"{row['realized_pnl_krw']:+,.0f}원 "
+        f"(승률 {row['win_rate']:.1f}%, 평균 {row['avg_pnl_pct']:+.2f}%, 매도 {row['sell_count']}회)"
+    )
+
+
+def _append_performance_section(lines: list[str], title: str, summaries: list[dict]) -> None:
+    lines.append(title)
+    lines.append("")
+    for summary in summaries:
+        lines.append(
+            f"{summary['days']}일: 실현손익 {summary['realized_pnl_krw']:+,.0f}원 | "
+            f"승률 {summary['win_rate']:.1f}% | 평균 {summary['avg_pnl_pct']:+.2f}% | "
+            f"매도 {summary['sell_count']}회 | 매수 {summary['buy_count']}회"
+        )
+        lines.append(_format_symbol_performance_row("최고", summary.get("top_winner")))
+        lines.append(_format_symbol_performance_row("최저", summary.get("top_loser")))
+        lines.append("")
+
+
+def _performance_report_text(days_list: list[int] | None = None) -> str:
+    days_list = days_list or [7, 14, 30]
+    managed_summaries = runtime_managed_window_performance(days_list)
+    core_summaries = base_enabled_window_performance(days_list)
+
+    lines = ["📈 최근 실현 성과 리포트", ""]
+    _append_performance_section(lines, "기준 1: runtime_params 등록 종목 전체", managed_summaries)
+    _append_performance_section(lines, "기준 2: 현재 base-enabled 코어", core_summaries)
+
+    return "\n".join(lines).strip()
 
 async def send_trade_alert(market: str, symbol: str, action: str, confidence: float, price: float, quantity: float, entry_price: float = 0, rsi: float = 0):
     settings = get_settings()
@@ -152,49 +190,9 @@ async def send_disk_alert():
 
 
 async def send_weekly_report():
-    """주간 수익률 리포트 텔레그램 전송"""
+    """최근 7/14/30일 실현 성과 리포트 텔레그램 전송."""
     try:
-        from backend.execution.coin_executor import CoinExecutor
-
-        with get_db() as conn:
-            cur = conn.cursor()
-            cur.execute("""
-                SELECT action, SUM(price * quantity) as total
-                FROM trades
-                WHERE market = 'coin'
-                  AND executed_at >= NOW() - INTERVAL '7 days'
-                GROUP BY action
-            """)
-            rows = {r["action"]: float(r["total"]) for r in cur.fetchall()}
-
-            cur.execute("SELECT COUNT(*) as cnt FROM trades WHERE market='coin' AND executed_at >= NOW() - INTERVAL '7 days'")
-            trade_count = cur.fetchone()["cnt"]
-
-            cur.execute("""
-                SELECT action, COUNT(*) as cnt FROM trades
-                WHERE market='coin' AND executed_at >= NOW() - INTERVAL '7 days'
-                GROUP BY action
-            """)
-            counts = {r["action"]: r["cnt"] for r in cur.fetchall()}
-
-        executor = CoinExecutor()
-        krw = executor.get_balance_krw()
-
-        buy_total = rows.get("BUY", 0)
-        sell_total = rows.get("SELL", 0)
-        pnl = sell_total - buy_total
-
-        text = (
-            f"📊 주간 수익률 리포트\n"
-            f"{'='*20}\n"
-            f"기간: 최근 7일\n\n"
-            f"매수 횟수: {counts.get('BUY', 0)}회 ({buy_total:,.0f}원)\n"
-            f"매도 횟수: {counts.get('SELL', 0)}회 ({sell_total:,.0f}원)\n"
-            f"실현 손익: {pnl:+,.0f}원\n\n"
-            f"현재 KRW 잔고: {krw:,.0f}원\n"
-            f"총 거래 수: {trade_count}건"
-        )
-        await send_message(text)
+        await send_message(_performance_report_text([7, 14, 30]))
     except Exception as e:
         logger.error(f"주간 리포트 실패: {e}")
 
@@ -253,6 +251,18 @@ async def _list_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⛔ 접근 권한이 없습니다.")
         return
     await update.message.reply_text(_command_help_text())
+
+
+async def _performance_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed_chat(update):
+        await update.message.reply_text("⛔ 접근 권한이 없습니다.")
+        return
+
+    try:
+        await update.message.reply_text(_performance_report_text([7, 14, 30]))
+    except Exception as e:
+        logger.error(f"performance 조회 실패: {e}")
+        await update.message.reply_text("❌ 성과 리포트 조회 중 오류가 발생했습니다.")
 
 async def _balance_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _is_allowed_chat(update):
@@ -463,6 +473,7 @@ def setup_bot() -> Application:
     app.add_handler(CommandHandler("list", _list_handler))
     app.add_handler(CommandHandler("balance", _balance_handler))
     app.add_handler(CommandHandler("status", _status_handler))
+    app.add_handler(CommandHandler("performance", _performance_handler))
     app.add_handler(CommandHandler("watchlist", _watchlist_handler))
     app.add_handler(CommandHandler("watchlist_remove", _watchlist_remove_handler))
     app.add_handler(CommandHandler("watchlist_add", _watchlist_add_handler))

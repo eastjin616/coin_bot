@@ -7,6 +7,8 @@ from backend.telegram_bot import (
     _command_help_text,
     _format_signal_candle_label,
     _list_handler,
+    _performance_handler,
+    _performance_report_text,
     _start_handler,
     _stateboard_summary,
     _top_selection_summary,
@@ -94,6 +96,7 @@ def test_start_handler_mentions_watchlist_commands():
     asyncio.run(_start_handler(update, context))
 
     text = update.message.reply_text.await_args.args[0]
+    assert "/performance" in text
     assert "/watchlist" in text
     assert "/watchlist_remove BTC" in text
     assert "/watchlist_add BTC" in text
@@ -108,3 +111,81 @@ def test_list_handler_returns_help_text_for_allowed_chat():
         asyncio.run(_list_handler(update, context))
 
     assert update.message.reply_text.await_args.args[0] == _command_help_text()
+
+
+def test_performance_report_text_renders_multi_window_summary():
+    with patch(
+        "backend.telegram_bot.runtime_managed_window_performance",
+        return_value=[
+            {
+                "days": 7,
+                "label": "runtime-managed",
+                "realized_pnl_krw": 12345.0,
+                "win_rate": 66.7,
+                "avg_pnl_pct": 4.2,
+                "sell_count": 3,
+                "buy_count": 2,
+                "top_winner": {
+                    "symbol": "KRW-BCH",
+                    "realized_pnl_krw": 10000.0,
+                    "win_rate": 100.0,
+                    "avg_pnl_pct": 10.0,
+                    "sell_count": 1,
+                },
+                "top_loser": {
+                    "symbol": "KRW-LINK",
+                    "realized_pnl_krw": -5000.0,
+                    "win_rate": 0.0,
+                    "avg_pnl_pct": -8.0,
+                    "sell_count": 2,
+                },
+            }
+        ],
+    ), patch(
+        "backend.telegram_bot.base_enabled_window_performance",
+        return_value=[
+            {
+                "days": 7,
+                "label": "base-enabled",
+                "realized_pnl_krw": 6789.0,
+                "win_rate": 50.0,
+                "avg_pnl_pct": 1.1,
+                "sell_count": 2,
+                "buy_count": 1,
+                "top_winner": {
+                    "symbol": "KRW-ADA",
+                    "realized_pnl_krw": 7000.0,
+                    "win_rate": 100.0,
+                    "avg_pnl_pct": 5.0,
+                    "sell_count": 1,
+                },
+                "top_loser": {
+                    "symbol": "KRW-BCH",
+                    "realized_pnl_krw": -211.0,
+                    "win_rate": 0.0,
+                    "avg_pnl_pct": -0.5,
+                    "sell_count": 1,
+                },
+            }
+        ],
+    ):
+        text = _performance_report_text([7])
+
+    assert "기준 1: runtime_params 등록 종목 전체" in text
+    assert "기준 2: 현재 base-enabled 코어" in text
+    assert "7일: 실현손익 +12,345원" in text
+    assert "최고: BCH +10,000원" in text
+    assert "최저: LINK -5,000원" in text
+    assert "7일: 실현손익 +6,789원" in text
+    assert "최고: ADA +7,000원" in text
+
+
+def test_performance_handler_returns_report_for_allowed_chat():
+    update = _fake_update()
+    context = _fake_context()
+
+    with patch("backend.telegram_bot._is_allowed_chat", return_value=True), \
+         patch("backend.telegram_bot._performance_report_text", return_value="perf report"):
+        asyncio.run(_performance_handler(update, context))
+
+    assert update.message.reply_text.await_args.args[0] == "perf report"
