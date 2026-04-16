@@ -146,7 +146,7 @@ coin_bot/
 │   ├── runtime_params.json  # Single source: buy universe, per-coin RSI & trailing/stop %
 │   ├── runtime_params.py    # Load/cache RUNTIME_PARAMS_PATH or default JSON
 │   ├── runtime_status.py    # Runtime universe / regime / performance status
-│   ├── telegram_bot.py      # Trade alerts + /balance /status commands
+│   ├── telegram_bot.py      # Trade alerts + /balance /status /performance commands
 │   ├── routers/
 │   │   └── runtime.py       # /api/runtime/status
 │   └── execution/
@@ -242,18 +242,18 @@ Operators can override buy eligibility without deleting DB watchlist rows:
 - `/watchlist_add BTC` writes `manual_override=enabled`
 - `/list` shows the command summary again
 
-Selection is now score-based rather than threshold-only:
+Selection is now score-based with a guarded tactical core:
+- keep the preferred core (`KRW-LINK`, `KRW-BCH`, `KRW-ADA`) inside the default `top_n=3` runtime set unless future research materially changes the thesis
 - rank by realistic return, walk-forward OOS, recent OOS, trade count, and drawdown penalty
-- enable only the top `N` symbols that also pass minimum robustness gates
-- default runtime profile uses `top_n=3`
+- for prioritization, use `effective_selection_score = selection_score + live_score_adjustment`
 - then apply a recent live-performance overlay:
   - look back `30` days
-  - require at least `3` realized SELL trades
-  - if realized P&L is negative and live win-rate / avg P&L stay weak, block new buys temporarily
-- for prioritization, use `effective_selection_score = selection_score + live_score_adjustment`
+  - require at least `2` realized SELL trades before derating
+  - expect at least `50%` win rate, `0.0%` average realized P&L, and non-negative realized KRW P&L
+  - otherwise block new buys temporarily
 - then apply loss-streak cooldown:
   - if recent SELL trades show `2+` consecutive losses
-  - block new buys for `7` days
+  - block new buys for `10` days
 
 Other coins can still be held temporarily as existing positions. New entries are blocked, and the active watchlist is automatically aligned to:
 - the runtime buy universe
@@ -350,7 +350,7 @@ PYTHONPATH=. pytest -q
 ```
 
 Current local regression status:
-- `89 passed`
+- `107 passed`
 
 ---
 
@@ -406,8 +406,9 @@ Detailed operator guide: [docs/superpowers/telegram-commands.md](docs/superpower
 | `/start` | Bot introduction + command summary |
 | `/balance` | Current positions + KRW balance |
 | `/status` | Runtime status, RSI, P&L, selection score, blocked summary |
+| `/performance` | Recent 7/14/30-day realized-performance summary for runtime-managed and base-enabled symbols |
 
-Automated alerts: trade executions, low balance warnings, disk warnings, daily 9AM portfolio report, weekly P&L summary, runtime auto-apply result notifications.
+Automated alerts: trade executions, low balance warnings, disk warnings, daily 9:00 KST portfolio report, daily 9:05 KST realized-performance summary, runtime auto-apply result notifications.
 
 ---
 

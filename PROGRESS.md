@@ -236,6 +236,42 @@
   - `journalctl` 에서 `✅ 오케스트레이터 시작`
   - `runtime params loaded (15 symbols) from /home/ubuntu/coin_bot/backend/runtime_params.json`
 
+## 2026-04-16: 전술 코어 고정 + 실현 성과 리포트 확장
+
+### 전술 코어 우선 선발 (`backtesting/reselect_runtime.py`, `backend/runtime_params.json`)
+- 자동 재선정이 기본적으로 `KRW-LINK`, `KRW-BCH`, `KRW-ADA` 전술 코어를 유지하도록 변경
+- `selection_bucket="core"` 메타를 `runtime_params.json`에 기록
+- 코어 종목이 최소 기준을 통과하면 우선 선발하고, 기준 미달이어도 기본 `top_n=3` 슬롯 안에서 보강 선발
+- 코어 밖 종목은 점수가 더 높아도 기본 자동선발에서는 제외
+- 2026-04-16 기준 런타임 리포트 재생성:
+  - `docs/superpowers/reports/2026-04-16-runtime-universe.md`
+
+### live derating 강화 + 성과 집계 확장 (`backend/config.py`, `backend/live_performance.py`)
+- live derating 최소 매도 수를 `3 -> 2` 로 조정
+- 최소 승률 기준을 `40% -> 50%` 로 상향
+- 최소 평균 손익률 기준을 `-0.5% -> 0.0%` 로 상향
+- 최소 실현손익 KRW 기준(`live_derating_min_realized_pnl_krw`) 추가
+- loss-streak cooldown 기간을 `7 -> 10일` 로 연장
+- 최근 `7/14/30일` 기간별 실현 성과를 집계하는 helper 추가
+  - runtime-managed 전체
+  - 현재 base-enabled 코어
+
+### 텔레그램 `/performance` + 새 일일 성과 리포트 (`backend/telegram_bot.py`, `backend/orchestrator.py`)
+- `/performance` 명령 추가
+  - 최근 `7/14/30일` 실현 성과를 runtime-managed / base-enabled 기준으로 각각 출력
+  - 각 기간별 최고 수익 종목 / 최저 수익 종목 포함
+- 기존 주간 7일 리포트를 대체해
+  - 매일 `09:05 KST` 에 최근 `7/14/30일` 실현 성과 리포트를 전송하도록 변경
+
+### 테스트 / 검증
+- `pytest -q` → **107 passed**
+- EC2 배포:
+  - 대상: `ubuntu@43.203.205.237:/home/ubuntu/coin_bot`
+  - `rsync` 후 `sudo systemctl restart coinbot`
+  - `systemctl is-active coinbot` → `active`
+  - `/api/runtime/status` 원격 조회 성공
+  - 배포 직후 원격 `buy_enabled_symbols` 는 `KRW-BCH` 만 활성
+
 ---
 
 ## 2026-04-08: 업비트 주문 안정성 + 운영 리스크 캡

@@ -6,7 +6,7 @@ coin_bot 운영용 텔레그램 명령어와 자동 알림 정리.
 
 - 봇 토큰: `.env`의 `TELEGRAM_BOT_TOKEN`
 - 허용 사용자: `.env`의 `TELEGRAM_ALLOWED_CHAT_IDS`
-- 허용되지 않은 chat_id 에서는 `/balance`, `/status` 사용 불가
+- 허용되지 않은 chat_id 에서는 `/balance`, `/status`, `/performance` 사용 불가
 
 ## 명령어
 
@@ -46,6 +46,18 @@ coin_bot 운영용 텔레그램 명령어와 자동 알림 정리.
 - 최근 30일 실현손익 / 승률 / 매도 횟수
 - KRW 잔고
 
+### `/performance`
+
+최근 실현 성과를 기간별로 요약해서 보여준다.
+
+포함 내용:
+- 최근 `7/14/30일` 실현손익
+- 승률
+- 평균 실현 손익률
+- 매수/매도 횟수
+- `runtime_params.json` 등록 종목 전체 기준 최고/최저 종목
+- 현재 `base-enabled` 코어 기준 최고/최저 종목
+
 ## 자동 알림
 
 ### 매수/매도 체결 알림
@@ -77,14 +89,15 @@ coin_bot 운영용 텔레그램 명령어와 자동 알림 정리.
 - 합산 미실현 손익
 - KRW 잔고
 
-### 주간 수익률 리포트
+### 실현 성과 리포트
 
-매주 월요일 오전 `09:00 KST` 전송.
+매일 오전 `09:05 KST` 전송.
 
 포함 내용:
-- 최근 7일 매수/매도 횟수
-- 최근 7일 실현 손익
-- 현재 KRW 잔고
+- 최근 `7/14/30일` 실현 손익
+- 승률 / 평균 실현 손익률
+- 매수/매도 횟수
+- runtime-managed / base-enabled 기준 최고·최저 종목
 
 ### runtime auto-apply 결과 알림
 
@@ -101,5 +114,6 @@ coin_bot 운영용 텔레그램 명령어와 자동 알림 정리.
 ## 운영 메모
 
 - `/status`의 RSI는 **현재 진행 중인 일봉이 아니라 마지막 확정 일봉 기준**이다.
+- `/performance`와 실현 성과 리포트는 `runtime_params` 전체와 현재 `base-enabled` 코어를 각각 따로 요약한다.
 - runtime auto-apply는 안전 게이트를 통과한 경우에만 `runtime_params.json`을 자동 갱신한다.
 - 텔레그램 알림이 안 오면 먼저 `TELEGRAM_ALLOWED_CHAT_IDS` 설정과 서버 로그를 확인한다.
