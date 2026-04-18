@@ -329,3 +329,56 @@ class TestManualHoldings:
         assert "UPDATE manual_holdings" in sql
         assert params == (["KRW-LINK"],)
         assert mock_conn.commit.call_count == 1
+
+
+class TestDCA:
+    def _make_orc_with_dca(self, dca_enabled=True, max_dca_count=2, dca_step_rsi=5.0):
+        orc = make_orchestrator()
+        orc.settings.dca_enabled = dca_enabled
+        orc.settings.max_dca_count = max_dca_count
+        orc.settings.dca_step_rsi = dca_step_rsi
+        return orc
+
+    def _mock_db_position(self, dca_count, last_buy_rsi):
+        mock_conn = MagicMock()
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+        mock_cur = MagicMock()
+        mock_cur.fetchone.return_value = {"dca_count": dca_count, "last_buy_rsi": last_buy_rsi}
+        mock_conn.cursor.return_value = mock_cur
+        return mock_conn
+
+    def test_dca_disabled_blocks_reentry(self):
+        orc = self._make_orc_with_dca(dca_enabled=False)
+        assert orc._should_dca("KRW-LINK", 30.0) is False
+
+    def test_dca_triggers_when_rsi_drops_enough(self):
+        orc = self._make_orc_with_dca(dca_step_rsi=5.0)
+        mock_conn = self._mock_db_position(dca_count=0, last_buy_rsi=40.0)
+        with patch("backend.orchestrator.get_db", return_value=mock_conn):
+            # RSI 34.9 = 40 - 5.1 → 충분히 낮음
+            assert orc._should_dca("KRW-LINK", 34.9) is True
+
+    def test_dca_blocked_when_rsi_not_low_enough(self):
+        orc = self._make_orc_with_dca(dca_step_rsi=5.0)
+        mock_conn = self._mock_db_position(dca_count=0, last_buy_rsi=40.0)
+        with patch("backend.orchestrator.get_db", return_value=mock_conn):
+            # RSI 36 = 40 - 4 → step 5 미달
+            assert orc._should_dca("KRW-LINK", 36.0) is False
+
+    def test_dca_blocked_when_max_count_reached(self):
+        orc = self._make_orc_with_dca(max_dca_count=2)
+        mock_conn = self._mock_db_position(dca_count=2, last_buy_rsi=40.0)
+        with patch("backend.orchestrator.get_db", return_value=mock_conn):
+            assert orc._should_dca("KRW-LINK", 20.0) is False
+
+    def test_dca_blocked_when_no_position(self):
+        orc = self._make_orc_with_dca()
+        mock_conn = MagicMock()
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+        mock_cur = MagicMock()
+        mock_cur.fetchone.return_value = None
+        mock_conn.cursor.return_value = mock_cur
+        with patch("backend.orchestrator.get_db", return_value=mock_conn):
+            assert orc._should_dca("KRW-LINK", 20.0) is False

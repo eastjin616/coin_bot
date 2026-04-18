@@ -426,6 +426,31 @@ class Orchestrator:
             return max(buy_th - weak_trend_buffer, 0.0)
         return buy_th
 
+    def _should_dca(self, symbol: str, current_rsi: float) -> bool:
+        """직전 매수보다 RSI가 dca_step_rsi 이상 더 낮을 때 추가매수 허용."""
+        if not getattr(self.settings, "dca_enabled", False):
+            return False
+        max_dca = int(getattr(self.settings, "max_dca_count", 2))
+        step_rsi = float(getattr(self.settings, "dca_step_rsi", 5.0))
+        try:
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT dca_count, last_buy_rsi FROM positions WHERE market='coin' AND symbol=%s",
+                    (symbol,),
+                )
+                row = cur.fetchone()
+            if not row:
+                return False
+            dca_count = int(row["dca_count"] or 0)
+            if dca_count >= max_dca:
+                return False
+            last_rsi = float(row["last_buy_rsi"] or 100.0)
+            return current_rsi <= last_rsi - step_rsi
+        except Exception as e:
+            logger.warning("DCA 판단 오류 [%s]: %s", symbol, e)
+            return False
+
     def _has_processed_signal(self, market: str, symbol: str, action: str, candle_time) -> bool:
         if candle_time is None:
             return False
@@ -698,10 +723,15 @@ class Orchestrator:
                 logger.debug("이미 처리한 일봉 신호 스킵: %s %s %s", symbol, action, signal_candle_time)
                 return
 
-            # 4. 이미 포지션 보유 중이면 재매수 차단 (쿨다운 만료 후 중복 매수 방지)
+            # 4. 이미 포지션 보유 중이면 DCA 조건 확인 후 차단/허용
+            is_dca = False
             if action == "BUY" and self._has_position(symbol):
-                logger.debug(f"포지션 보유 중 — 재매수 차단: {symbol}")
-                return
+                if self._should_dca(symbol, rsi):
+                    is_dca = True
+                    logger.info(f"DCA 추가매수 조건 충족: {symbol} RSI={rsi:.1f}")
+                else:
+                    logger.debug(f"포지션 보유 중 — 재매수 차단: {symbol}")
+                    return
 
             # 5. 운영 제외 심볼은 신규 매수 차단
             if action == "BUY" and not self._is_buy_enabled_symbol(symbol):
@@ -754,8 +784,12 @@ class Orchestrator:
                         )
                     return
             if action == "BUY":
-                order_ratio = self._get_buy_order_ratio(market_regime)
-                result = self.coin_executor.buy(symbol, 100.0, order_size_ratio=order_ratio)
+                if is_dca:
+                    order_ratio = float(getattr(self.settings, "dca_order_size_ratio", 0.1))
+                    result = self.coin_executor.buy(symbol, 100.0, order_size_ratio=order_ratio, dca_rsi=rsi)
+                else:
+                    order_ratio = self._get_buy_order_ratio(market_regime)
+                    result = self.coin_executor.buy(symbol, 100.0, order_size_ratio=order_ratio, dca_rsi=rsi)
             else:
                 result = self.coin_executor.sell(symbol, 100.0)
 
@@ -763,11 +797,20 @@ class Orchestrator:
                 update_cooldown(symbol, action)
                 if signal_candle_time is not None:
                     self._mark_signal_processed(market, symbol, action, signal_candle_time)
-                await send_trade_alert(
-                    market=market, symbol=name or symbol, action=action,
-                    confidence=100.0, price=result.get("price", 0), quantity=result.get("quantity", 0),
-                    entry_price=result.get("entry_price", 0), rsi=rsi
-                )
+                if is_dca and action == "BUY":
+                    price = result.get("price", 0)
+                    entry_price = result.get("entry_price", 0)
+                    await send_message(
+                        f"➕ DCA 추가매수 [{name or symbol}]\n"
+                        f"RSI: {rsi:.1f} | 체결가: {price:,.0f}원\n"
+                        f"평균단가: {entry_price:,.0f}원"
+                    )
+                else:
+                    await send_trade_alert(
+                        market=market, symbol=name or symbol, action=action,
+                        confidence=100.0, price=result.get("price", 0), quantity=result.get("quantity", 0),
+                        entry_price=result.get("entry_price", 0), rsi=rsi
+                    )
                 logger.info(f"✅ {action} 완료: {symbol}")
         except Exception as e:
             logger.error(f"분석/매매 오류 [{symbol}]: {e}")

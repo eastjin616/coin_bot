@@ -513,7 +513,7 @@ class CoinExecutor:
         """시장가 매수 — 금액 직접 지정"""
         return self._execute_buy(symbol, confidence, amount_krw)
 
-    def buy(self, symbol: str, confidence: float, order_size_ratio: float | None = None) -> dict | None:
+    def buy(self, symbol: str, confidence: float, order_size_ratio: float | None = None, *, dca_rsi: float | None = None) -> dict | None:
         """시장가 매수. 잔고 비율 기반 (최소 10,000원 / 최대 50,000원) 매수."""
         krw_balance = self.get_balance_krw()
         min_order = self.settings.min_order_amount_krw
@@ -528,9 +528,9 @@ class CoinExecutor:
             logger.warning(f"잔고 부족: {krw_balance:.0f}원 (최소 {min_order:,}원 필요)")
             return None
         logger.info(f"매수 금액 결정: {order_amount:,}원 (잔고 {krw_balance:,.0f}원의 {ratio * 100:.1f}%)")
-        return self._execute_buy(symbol, confidence, order_amount)
+        return self._execute_buy(symbol, confidence, order_amount, dca_rsi=dca_rsi)
 
-    def _execute_buy(self, symbol: str, confidence: float, order_amount: float) -> dict | None:
+    def _execute_buy(self, symbol: str, confidence: float, order_amount: float, *, dca_rsi: float | None = None) -> dict | None:
         """실제 매수 실행"""
         if order_amount < 5000:
             logger.warning(f"주문 금액 부족: {order_amount:.0f}원 (최소 5,000원)")
@@ -564,6 +564,7 @@ class CoinExecutor:
                 confidence,
                 price,
                 quantity,
+                dca_rsi=dca_rsi,
             ):
                 return None
             self._mark_order_journal_status(result["uuid"], "completed")
@@ -681,6 +682,8 @@ class CoinExecutor:
         confidence: float,
         price: float,
         quantity: float,
+        *,
+        dca_rsi: float | None = None,
     ) -> bool:
         try:
             with get_db() as conn:
@@ -697,8 +700,8 @@ class CoinExecutor:
                 if inserted:
                     cur.execute(
                         """
-                        INSERT INTO positions (market, symbol, entry_price, quantity, highest_price, source)
-                        VALUES (%s, %s, %s, %s, %s, 'bot')
+                        INSERT INTO positions (market, symbol, entry_price, quantity, highest_price, source, dca_count, last_buy_rsi)
+                        VALUES (%s, %s, %s, %s, %s, 'bot', 0, %s)
                         ON CONFLICT (market, symbol)
                         DO UPDATE SET
                             entry_price = CASE
@@ -715,9 +718,14 @@ class CoinExecutor:
                             ),
                             source = positions.source,
                             imported_at = positions.imported_at,
-                            opened_at = LEAST(positions.opened_at, EXCLUDED.opened_at)
+                            opened_at = LEAST(positions.opened_at, EXCLUDED.opened_at),
+                            dca_count = CASE
+                                WHEN EXCLUDED.last_buy_rsi IS NOT NULL THEN positions.dca_count + 1
+                                ELSE positions.dca_count
+                            END,
+                            last_buy_rsi = COALESCE(EXCLUDED.last_buy_rsi, positions.last_buy_rsi)
                         """,
-                        ("coin", symbol, price, quantity, price),
+                        ("coin", symbol, price, quantity, price, dca_rsi),
                     )
                 conn.commit()
                 return True

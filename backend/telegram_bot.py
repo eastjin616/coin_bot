@@ -22,6 +22,7 @@ def _command_help_text() -> str:
         "/balance - 현재 보유 포지션 조회\n"
         "/status - 실시간 RSI + 미실현 손익\n"
         "/performance - 최근 7/14/30일 실현 성과 요약\n"
+        "/dca - 포지션별 DCA 추가매수 현황 조회\n"
         "/watchlist - 현재 신규매수 허용/보유 관리 종목 조회\n"
         "/watchlist_remove BTC - 해당 심볼 신규매수 제외\n"
         "/watchlist_add BTC - 해당 심볼 신규매수 허용\n"
@@ -253,6 +254,46 @@ async def _list_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(_command_help_text())
 
 
+async def _dca_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed_chat(update):
+        await update.message.reply_text("⛔ 접근 권한이 없습니다.")
+        return
+    try:
+        settings = get_settings()
+        dca_enabled = getattr(settings, "dca_enabled", False)
+        max_dca = int(getattr(settings, "max_dca_count", 2))
+        step_rsi = float(getattr(settings, "dca_step_rsi", 5.0))
+
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT symbol, entry_price, dca_count, last_buy_rsi
+                FROM positions WHERE market = 'coin'
+                ORDER BY symbol
+            """)
+            rows = cur.fetchall()
+
+        if not rows:
+            await update.message.reply_text("보유 포지션 없음")
+            return
+
+        lines = [f"➕ DCA 현황 (활성: {'ON' if dca_enabled else 'OFF'})\n"]
+        for row in rows:
+            sym = row["symbol"].replace("KRW-", "")
+            dca_count = int(row["dca_count"] or 0)
+            last_rsi = row["last_buy_rsi"]
+            last_rsi_str = f"{float(last_rsi):.1f}" if last_rsi else "—"
+            next_rsi = f"{float(last_rsi) - step_rsi:.1f}" if last_rsi else "—"
+            remaining = max_dca - dca_count
+            lines.append(
+                f"{sym}: {dca_count}/{max_dca}회 | 직전RSI {last_rsi_str} | 다음발동 RSI≤{next_rsi} | 남은횟수 {remaining}"
+            )
+        await update.message.reply_text("\n".join(lines))
+    except Exception as e:
+        logger.error(f"DCA 조회 실패: {e}")
+        await update.message.reply_text("❌ DCA 현황 조회 중 오류가 발생했습니다.")
+
+
 async def _performance_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _is_allowed_chat(update):
         await update.message.reply_text("⛔ 접근 권한이 없습니다.")
@@ -474,6 +515,7 @@ def setup_bot() -> Application:
     app.add_handler(CommandHandler("balance", _balance_handler))
     app.add_handler(CommandHandler("status", _status_handler))
     app.add_handler(CommandHandler("performance", _performance_handler))
+    app.add_handler(CommandHandler("dca", _dca_handler))
     app.add_handler(CommandHandler("watchlist", _watchlist_handler))
     app.add_handler(CommandHandler("watchlist_remove", _watchlist_remove_handler))
     app.add_handler(CommandHandler("watchlist_add", _watchlist_add_handler))

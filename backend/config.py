@@ -73,6 +73,12 @@ class Settings(BaseSettings):
     manual_holding_policy: str = "alert_only"
     manual_holding_min_value_krw: int = 10000
 
+    # DCA (분할매수)
+    dca_enabled: bool = False
+    dca_step_rsi: float = 5.0      # 직전 매수 RSI보다 이 값만큼 더 빠져야 추가매수
+    max_dca_count: int = 2          # 초기 매수 후 최대 추가매수 횟수
+    dca_order_size_ratio: float = 0.1  # DCA 1회당 잔고 비율
+
     # 운영 리스크 캡 (0이면 비활성화)
     max_open_positions: int = 12
     max_buys_per_day: int = 48
