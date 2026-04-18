@@ -10,3 +10,5 @@ dist/
 .DS_Store
 backtesting/data/
 .omx/
+.omc/
+.idea/
