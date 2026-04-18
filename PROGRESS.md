@@ -1,5 +1,32 @@
 # coin_bot 구현 현황
 
+## 2026-04-18: DCA 분할매수 + 분할 매도 + TRX 활성화
+
+### DCA 분할매수 (`backend/config.py`, `backend/database.py`, `backend/execution/coin_executor.py`, `backend/orchestrator.py`)
+- 기본값 비활성화 (`DCA_ENABLED=false`), `.env`로 활성화
+- 직전 매수 RSI보다 `dca_step_rsi`(기본 5.0) 이상 더 빠졌을 때 추가매수
+- 최대 `max_dca_count`(기본 2)회, 회당 잔고 `dca_order_size_ratio`(기본 10%)
+- positions 테이블에 `dca_count`, `last_buy_rsi` 컬럼 추가
+- 텔레그램 `➕ DCA 추가매수` 알림, `/dca` 명령어 추가 (포지션별 DCA 현황)
+
+### 분할 매도 (`backend/config.py`, `backend/database.py`, `backend/execution/coin_executor.py`, `backend/orchestrator.py`)
+- 기본값 비활성화 (`PARTIAL_SELL_ENABLED=false`), `.env`로 활성화
+- RSI가 매도 임계값 - `partial_sell_rsi_offset`(기본 5.0) 구간 진입 시 `partial_sell_pct`(기본 50%) 매도
+- 포지션당 1회만 실행 (`partial_sell_done` 플래그)
+- positions 테이블에 `partial_sell_done` 컬럼 추가
+- 텔레그램 `✂️ 분할 매도` 알림
+
+### TRX 활성화 (`backend/runtime_params.json`)
+- `KRW-TRX` enabled=true, `selection_bucket="core"` 편입
+- 이유: selection_score +6.25 (코어 3종 중 최고), recent OOS -0.45% (코어 중 최상위)
+- 활성 매수 종목: BCH / ADA / LINK / TRX (4종)
+
+### 테스트 / 검증
+- `pytest -q` → **115 passed**
+- EC2 배포: rsync + `sudo systemctl restart coinbot` → `active`
+
+---
+
 ## 2026-04-13: 단기 전술 모드 명시 + 종목별 익절 + 전술형 선발 점수
 
 ### 종목별 고정 익절을 런타임 단일 소스로 통합 (`backend/runtime_params.json`, `backend/runtime_params.py`, `backend/orchestrator.py`)
