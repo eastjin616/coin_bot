@@ -766,6 +766,120 @@ class CoinExecutor:
             logger.error(f"매도 체결 반영 실패: {e}")
         return False
 
+    def _record_partial_sell_fill(
+        self,
+        symbol: str,
+        order_uuid: str | None,
+        confidence: float,
+        price: float,
+        quantity: float,
+        *,
+        pnl_krw: float = 0.0,
+        pnl_pct: float = 0.0,
+    ) -> bool:
+        """부분 매도 체결 기록 — 포지션 삭제 대신 수량 차감 + partial_sell_done=true."""
+        try:
+            with get_db() as conn:
+                cur = conn.cursor()
+                inserted = self._insert_trade_row(
+                    cur,
+                    symbol=symbol,
+                    order_uuid=order_uuid,
+                    action="SELL",
+                    confidence=confidence,
+                    price=price,
+                    quantity=quantity,
+                    pnl_krw=pnl_krw,
+                    pnl_pct=pnl_pct,
+                )
+                if inserted:
+                    cur.execute(
+                        """
+                        UPDATE positions
+                        SET quantity = GREATEST(quantity - %s, 0),
+                            partial_sell_done = TRUE
+                        WHERE market = 'coin' AND symbol = %s
+                        """,
+                        (quantity, symbol),
+                    )
+                conn.commit()
+                return True
+        except Exception as e:
+            logger.error(f"부분 매도 체결 반영 실패: {e}")
+        return False
+
+    def sell_partial(self, symbol: str, confidence: float, sell_pct: float = 50.0) -> dict | None:
+        """보유 수량의 sell_pct%만 시장가 매도."""
+        coin_balance = self.get_coin_balance(symbol)
+        if coin_balance <= 0:
+            logger.warning(f"보유 수량 없음: {symbol}")
+            return None
+
+        import pyupbit as _pyupbit
+        current_price = _pyupbit.get_current_price(symbol) or 0
+        quantity_to_sell = coin_balance * sell_pct / 100.0
+        estimated_value = quantity_to_sell * current_price
+
+        if estimated_value < 5000:
+            logger.warning(f"부분 매도 금액 부족: {symbol} {estimated_value:,.0f}원 (최소 5,000원)")
+            return None
+
+        if not self.upbit:
+            logger.info(f"[모의] {symbol} 부분 매도 {quantity_to_sell:.6f} ({sell_pct:.0f}%)")
+            return {"symbol": symbol, "action": "SELL", "price": 0, "quantity": quantity_to_sell, "partial": True}
+
+        try:
+            entry_price = 0.0
+            try:
+                with get_db() as conn:
+                    cur = conn.cursor()
+                    cur.execute("SELECT entry_price FROM positions WHERE market='coin' AND symbol=%s", (symbol,))
+                    row = cur.fetchone()
+                    if row:
+                        entry_price = float(row["entry_price"])
+            except Exception:
+                pass
+
+            result = self._submit_sell_with_retry(symbol, quantity_to_sell)
+            if not result or "uuid" not in result:
+                return None
+
+            self._record_order_submission(
+                symbol=symbol,
+                action="SELL",
+                order_uuid=result["uuid"],
+                requested_quantity=quantity_to_sell,
+                entry_price_snapshot=entry_price,
+            )
+            order_detail = self._fetch_order_detail(result["uuid"])
+            if not order_detail:
+                return None
+
+            price = float(order_detail.get("avg_price") or order_detail.get("price") or 0)
+            quantity = float(order_detail.get("executed_volume") or quantity_to_sell)
+            if price == 0 and quantity > 0:
+                price = estimated_value / quantity
+
+            pnl_krw = (price - entry_price) * quantity if entry_price > 0 else 0.0
+            pnl_pct = (price - entry_price) / entry_price * 100 if entry_price > 0 else 0.0
+
+            if not self._record_partial_sell_fill(
+                symbol, result["uuid"], confidence, price, quantity,
+                pnl_krw=pnl_krw, pnl_pct=pnl_pct,
+            ):
+                return None
+
+            self._mark_order_journal_status(result["uuid"], "completed")
+            logger.info(f"부분 매도 완료: {symbol} {quantity:.6f} @ {price:.0f}원 ({sell_pct:.0f}%)")
+            return {
+                "symbol": symbol, "action": "SELL", "price": price,
+                "quantity": quantity, "entry_price": entry_price,
+                "pnl_krw": pnl_krw, "pnl_pct": pnl_pct, "partial": True,
+            }
+        except Exception as e:
+            logger.error(f"부분 매도 실행 오류: {e}")
+        return None
+
     def _remove_position(self, symbol: str):
         try:
             with get_db() as conn:

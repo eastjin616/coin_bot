@@ -426,6 +426,21 @@ class Orchestrator:
             return max(buy_th - weak_trend_buffer, 0.0)
         return buy_th
 
+    def _is_partial_sell_done(self, symbol: str) -> bool:
+        """해당 포지션의 부분 매도가 이미 완료됐는지 확인."""
+        try:
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT partial_sell_done FROM positions WHERE market='coin' AND symbol=%s",
+                    (symbol,),
+                )
+                row = cur.fetchone()
+            return bool(row and row["partial_sell_done"])
+        except Exception as e:
+            logger.warning("partial_sell_done 조회 오류 [%s]: %s", symbol, e)
+            return False
+
     def _should_dca(self, symbol: str, current_rsi: float) -> bool:
         """직전 매수보다 RSI가 dca_step_rsi 이상 더 낮을 때 추가매수 허용."""
         if not getattr(self.settings, "dca_enabled", False):
@@ -706,6 +721,27 @@ class Orchestrator:
                             f"보유일: {held_days}일\n"
                             f"신호 시점 손익: {snapshot_pnl_pct:+.2f}%\n"
                             f"체결 손익: {result.get('pnl_pct', 0):+.2f}% ({result.get('pnl_krw', 0):+,.0f}원)"
+                        )
+                    return
+
+            # 2b. 분할 매도 체크 (RSI가 매도 임계값에 가까워졌을 때 일부 실현)
+            if market == "coin" and getattr(self.settings, "partial_sell_enabled", False):
+                _, sell_th = rsi_pair(symbol, self.settings.rsi_buy_threshold, self.settings.rsi_sell_threshold)
+                offset = float(getattr(self.settings, "partial_sell_rsi_offset", 5.0))
+                partial_th = sell_th - offset
+                if partial_th <= rsi < sell_th and self._has_position(symbol) and not self._is_partial_sell_done(symbol):
+                    sell_pct = float(getattr(self.settings, "partial_sell_pct", 50.0))
+                    result = self.coin_executor.sell_partial(symbol, 100.0, sell_pct=sell_pct)
+                    if result:
+                        update_cooldown(symbol, "SELL")
+                        price = result.get("price", 0)
+                        entry_price = result.get("entry_price", 0)
+                        pnl_pct = result.get("pnl_pct", 0)
+                        pnl_krw = result.get("pnl_krw", 0)
+                        await send_message(
+                            f"✂️ 분할 매도 [{name or symbol}] {sell_pct:.0f}%\n"
+                            f"RSI: {rsi:.1f} (임계 {sell_th:.0f} 접근)\n"
+                            f"체결가: {price:,.0f}원 | 손익: {pnl_pct:+.2f}% ({pnl_krw:+,.0f}원)"
                         )
                     return
 

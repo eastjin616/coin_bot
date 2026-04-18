@@ -140,6 +140,7 @@ def create_tables() -> None:
                 ALTER TABLE positions ADD COLUMN IF NOT EXISTS imported_at TIMESTAMP;
                 ALTER TABLE positions ADD COLUMN IF NOT EXISTS dca_count INT DEFAULT 0;
                 ALTER TABLE positions ADD COLUMN IF NOT EXISTS last_buy_rsi DECIMAL(6, 2);
+                ALTER TABLE positions ADD COLUMN IF NOT EXISTS partial_sell_done BOOLEAN DEFAULT FALSE;
                 UPDATE positions SET highest_price = entry_price WHERE highest_price = 0 OR highest_price IS NULL;
             """)
             cur.execute("""

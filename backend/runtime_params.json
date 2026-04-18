@@ -144,8 +144,8 @@
   },
   "KRW-TRX": {
     "name": "트론",
-    "enabled": false,
-    "reason": "전술 코어 밖 자동선발 제외 (score +6.2)",
+    "enabled": true,
+    "reason": "전술 코어 편입 — recent OOS -0.45% (코어 최상위), score +6.2",
     "realistic_return_pct": 12.48,
     "recent_oos_pct": -0.45,
     "rsi_buy": 40,
@@ -154,7 +154,8 @@
     "trailing_activation_percent": 5.0,
     "stop_loss_percent": 7,
     "avg_walk_forward_oos_pct": 0.4,
-    "selection_score": 6.25
+    "selection_score": 6.25,
+    "selection_bucket": "core"
   },
   "KRW-SUI": {
     "name": "수이",

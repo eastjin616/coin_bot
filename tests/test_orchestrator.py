@@ -64,8 +64,8 @@ class TestRuntimeFilters:
         assert self.orc._is_buy_enabled_symbol("KRW-BCH") is True
         assert self.orc._is_buy_enabled_symbol("KRW-ADA") is True
         assert self.orc._is_buy_enabled_symbol("KRW-LINK") is True
+        assert self.orc._is_buy_enabled_symbol("KRW-TRX") is True
         assert self.orc._is_buy_enabled_symbol("KRW-BTC") is False
-        assert self.orc._is_buy_enabled_symbol("KRW-TRX") is False
 
     def test_risk_off_requires_multiple_bearish_signals(self):
         indicators = {
@@ -329,6 +329,40 @@ class TestManualHoldings:
         assert "UPDATE manual_holdings" in sql
         assert params == (["KRW-LINK"],)
         assert mock_conn.commit.call_count == 1
+
+
+class TestPartialSell:
+    def _make_orc_with_partial(self, enabled=True, offset=5.0, pct=50.0):
+        orc = make_orchestrator()
+        orc.settings.partial_sell_enabled = enabled
+        orc.settings.partial_sell_rsi_offset = offset
+        orc.settings.partial_sell_pct = pct
+        return orc
+
+    def _mock_position(self, partial_sell_done: bool):
+        mock_conn = MagicMock()
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+        mock_cur = MagicMock()
+        mock_cur.fetchone.return_value = {"partial_sell_done": partial_sell_done}
+        mock_conn.cursor.return_value = mock_cur
+        return mock_conn
+
+    def test_partial_sell_not_done_returns_false(self):
+        orc = self._make_orc_with_partial()
+        mock_conn = self._mock_position(partial_sell_done=False)
+        with patch("backend.orchestrator.get_db", return_value=mock_conn):
+            assert orc._is_partial_sell_done("KRW-LINK") is False
+
+    def test_partial_sell_done_returns_true(self):
+        orc = self._make_orc_with_partial()
+        mock_conn = self._mock_position(partial_sell_done=True)
+        with patch("backend.orchestrator.get_db", return_value=mock_conn):
+            assert orc._is_partial_sell_done("KRW-LINK") is True
+
+    def test_partial_sell_disabled_skips(self):
+        orc = self._make_orc_with_partial(enabled=False)
+        assert orc._is_partial_sell_done("KRW-LINK") is False
 
 
 class TestDCA:

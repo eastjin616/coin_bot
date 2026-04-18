@@ -73,6 +73,11 @@ class Settings(BaseSettings):
     manual_holding_policy: str = "alert_only"
     manual_holding_min_value_krw: int = 10000
 
+    # 분할 매도
+    partial_sell_enabled: bool = False
+    partial_sell_rsi_offset: float = 5.0   # sell_threshold - offset 구간에서 부분 매도
+    partial_sell_pct: float = 50.0          # 보유량의 몇 % 매도
+
     # DCA (분할매수)
     dca_enabled: bool = False
     dca_step_rsi: float = 5.0      # 직전 매수 RSI보다 이 값만큼 더 빠져야 추가매수
