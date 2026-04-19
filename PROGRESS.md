@@ -18,6 +18,7 @@
 - 재시작 후 `/api/runtime/status` 응답도 정상 확인했다.
 - 확인 시점 기준 `coinbot-runtime-report.service` one-shot은 아직 `activating` 상태였고, 기존 `2026-04-19-runtime-universe.md` 본문은 이전 `top_n=3` 결과를 유지하고 있었다. 새 실행이 완료되면 `top_n=4` 기준으로 다시 써질 상태다.
 - 별도 검증용으로 EC2에서 `python -m backtesting.reselect_runtime --refresh-from-backend-snapshot --top-n 4 --write-report /tmp/coinbot-runtime-universe-top4-check.md` 를 실행했고, 생성된 report 헤더가 `Top-N setting: 4` 와 4개 enabled 심볼(`TRX/BCH/ADA/LINK`)을 출력함을 확인했다.
+- 이후 같은 snapshot 기반 명령으로 실제 `docs/superpowers/reports/2026-04-19-runtime-universe.md` 본문도 직접 다시 써서 `Top-N setting: 4` 와 4개 enabled 심볼이 반영된 것을 확인했다. 장기 full-research one-shot은 별도로 계속 `activating` 상태였다.
 
 ### Claude Code 보조 검토
 - 로컬 `claude` CLI 실행은 이번 세션에서도 `Not logged in · Please run /login` 으로 실패했다.

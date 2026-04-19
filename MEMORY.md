@@ -70,10 +70,11 @@
   - `coinbot-runtime-report.service` / `.timer`를 systemd에 재설치
   - installed unit과 실제 실행 중인 one-shot 프로세스 모두 `--top-n 4`
   - `/api/runtime/status` 응답 정상
+  - `2026-04-19-runtime-universe.md` 본문도 snapshot 기반 재생성으로 `Top-N setting: 4` 반영 확인
 - 주의:
   - full research 기반 `coinbot-runtime-report.service`는 오래 걸리는 배치다
   - 그래서 특정 시점에는 unit/proc는 새 값(`--top-n 4`)인데, 기존 날짜 report 본문은 이전 실행 결과를 잠시 유지할 수 있다
-  - 이 경우 snapshot-only 검증 (`--refresh-from-backend-snapshot`)으로 새 렌더링 결과를 먼저 확인할 수 있다
+  - 이 경우 snapshot-only 검증 (`--refresh-from-backend-snapshot`)으로 새 렌더링 결과를 먼저 확인하거나 실제 날짜 report를 안전하게 다시 쓸 수 있다
 
 ## 자주 쓰는 명령
 
