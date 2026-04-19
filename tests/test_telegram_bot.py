@@ -7,6 +7,7 @@ from backend.telegram_bot import (
     _all_coin_rows,
     _blocked_selection_summary,
     _command_help_text,
+    _dca_summary_lines,
     _format_signal_candle_label,
     _holding_line,
     _list_handler,
@@ -325,3 +326,34 @@ def test_all_coin_rows_db_exception_returns_empty_positions():
 
     assert rows == []
     assert holdings_ok is True
+
+
+def test_dca_summary_lines_returns_empty_when_disabled():
+    with patch("backend.telegram_bot.get_settings") as mock_settings:
+        mock_settings.return_value.dca_enabled = False
+        lines = _dca_summary_lines()
+    assert lines == []
+
+
+def test_dca_summary_lines_renders_positions_when_enabled():
+    mock_conn = MagicMock()
+    mock_cur = MagicMock()
+    mock_conn.cursor.return_value = mock_cur
+    mock_cur.fetchall.return_value = [
+        {"symbol": "KRW-BCH", "dca_count": 1, "last_buy_rsi": 38.0},
+        {"symbol": "KRW-ADA", "dca_count": 0, "last_buy_rsi": None},
+    ]
+    mock_db = MagicMock()
+    mock_db.__enter__.return_value = mock_conn
+    mock_db.__exit__.return_value = None
+
+    with patch("backend.telegram_bot.get_settings") as mock_settings, \
+         patch("backend.telegram_bot.get_db", return_value=mock_db):
+        mock_settings.return_value.dca_enabled = True
+        mock_settings.return_value.max_dca_count = 2
+        mock_settings.return_value.dca_step_rsi = 5.0
+        lines = _dca_summary_lines()
+
+    assert any("BCH" in l for l in lines)
+    assert any("33.0" in l for l in lines)  # 38.0 - 5.0
+    assert any("ADA" in l for l in lines)

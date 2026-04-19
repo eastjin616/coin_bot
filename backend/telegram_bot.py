@@ -320,8 +320,41 @@ async def send_weekly_report():
         logger.error(f"주간 리포트 실패: {e}")
 
 
+def _dca_summary_lines() -> list[str]:
+    """DCA 활성 시 포지션별 진행 현황 요약 라인 반환. 비활성이거나 포지션 없으면 빈 리스트."""
+    try:
+        settings = get_settings()
+        if not getattr(settings, "dca_enabled", False):
+            return []
+        max_dca = int(getattr(settings, "max_dca_count", 2))
+        step_rsi = float(getattr(settings, "dca_step_rsi", 5.0))
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT symbol, dca_count, last_buy_rsi FROM positions"
+                " WHERE market = 'coin' ORDER BY symbol"
+            )
+            rows = cur.fetchall()
+        if not rows:
+            return []
+        lines = ["\n➕ DCA 현황"]
+        for row in rows:
+            sym = row["symbol"].replace("KRW-", "")
+            dca_count = int(row["dca_count"] or 0)
+            last_rsi = row["last_buy_rsi"]
+            next_rsi = f"{float(last_rsi) - step_rsi:.1f}" if last_rsi else "—"
+            remaining = max_dca - dca_count
+            lines.append(
+                f"  {sym}: {dca_count}/{max_dca}회 | 다음발동 RSI≤{next_rsi} | 잔여 {remaining}회"
+            )
+        return lines
+    except Exception as e:
+        logger.warning(f"DCA 현황 조회 실패: {e}")
+        return []
+
+
 async def send_daily_position_report():
-    """매일 오전 9시 KST 포지션 현황 + 미실현 손익 전송"""
+    """매일 오전 9시 KST 포지션 현황 + 미실현 손익 + DCA 현황 전송"""
     try:
         import pyupbit
         from backend.execution.coin_executor import CoinExecutor
@@ -360,6 +393,7 @@ async def send_daily_position_report():
         else:
             lines.append("📭 보유 중인 코인 없음")
 
+        lines.extend(_dca_summary_lines())
         lines.append(f"\n💰 KRW 잔고: {krw:,.0f}원")
         await send_message("\n".join(lines))
     except Exception as e:
