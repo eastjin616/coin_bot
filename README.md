@@ -20,11 +20,12 @@ A fully automated cryptocurrency trading bot that runs 24/7 on AWS EC2. It monit
 - RSI-based entry/exit strategy optimized per coin via grid search backtesting
 - Regime filter: blocks altcoin buys when BTC shows multiple bearish signals
 - Dynamic position sizing: regime-aware base ratio with seed-aware concentration cap
+- Optional DCA re-entry and partial-sell execution paths for tactical position management
 - Trailing-stop risk management aligned between runtime and backtester
 - Runtime buy universe narrowed to coins with relatively better realistic/OOS performance
 - Order execution journal + recovery loop to reduce post-fill/local-DB drift
 - Manual exchange holdings can be detected, alerted, or imported under policy control
-- Telegram bot for real-time trade alerts and portfolio status
+- Telegram bot for real-time trade alerts, `/status`, `/performance`, `/watchlist*`, and `/dca`
 - Zombie position cleanup: auto-detects and removes stale DB entries
 
 ---
@@ -203,6 +204,9 @@ The practical takeaway is that the bot should hold fewer simultaneous positions 
 
 - Per-coin **buy eligibility**, **RSI thresholds**, and **trailing-stop / stop-loss** percentages live in `backend/runtime_params.json`.
 - Override the file path with env **`RUNTIME_PARAMS_PATH`** (optional).
+- Tactical optional features are controlled by env flags in `backend/config.py` / `.env`:
+  - `PARTIAL_SELL_ENABLED`, `PARTIAL_SELL_RSI_OFFSET`, `PARTIAL_SELL_PCT`
+  - `DCA_ENABLED`, `DCA_STEP_RSI`, `MAX_DCA_COUNT`, `DCA_ORDER_SIZE_RATIO`
 - Manual exchange holdings policy is controlled by:
   - `MANUAL_HOLDING_POLICY=alert_only|import|ignore`
   - `MANUAL_HOLDING_MIN_VALUE_KRW`
@@ -229,10 +233,11 @@ On EC2, the runtime report can also be scheduled daily via systemd timer:
 
 ## Runtime Universe
 
-Current new-buy runtime universe is intentionally narrower, and the DB watchlist is auto-synced to match it:
-- `KRW-LINK`
+Current `backend/runtime_params.json` enables four tactical buy symbols, and the DB watchlist is auto-synced to match enabled symbols plus any held positions:
 - `KRW-BCH`
 - `KRW-ADA`
+- `KRW-LINK`
+- `KRW-TRX`
 
 `KRW-BTC` is still used for regime detection, but is no longer eligible for new buys under the default runtime profile.
 
@@ -243,7 +248,8 @@ Operators can override buy eligibility without deleting DB watchlist rows:
 - `/list` shows the command summary again
 
 Selection is now score-based with a guarded tactical core:
-- keep the preferred core (`KRW-LINK`, `KRW-BCH`, `KRW-ADA`) inside the default `top_n=3` runtime set unless future research materially changes the thesis
+- the current runtime snapshot keeps `KRW-BCH`, `KRW-ADA`, `KRW-LINK`, and `KRW-TRX` in the tactical core
+- automatic reselection now defaults to `top_n=4` so the scheduled report/auto-apply path matches the current 4-symbol tactical core
 - rank by realistic return, walk-forward OOS, recent OOS, trade count, and drawdown penalty
 - for prioritization, use `effective_selection_score = selection_score + live_score_adjustment`
 - then apply a recent live-performance overlay:
@@ -262,7 +268,7 @@ Other coins can still be held temporarily as existing positions. New entries are
 Per-symbol tactical exits are also stored in `backend/runtime_params.json`:
 - `take_profit_percent` controls early profit-taking before trailing-stop activation
 - `trailing_activation_percent` and `stop_loss_percent` still manage post-entry downside / pullback exits
-- current tactical defaults for the active trio are `LINK 4.0%`, `BCH 2.0%`, `ADA 0.0%`
+- current tactical defaults for the active quartet are `BCH 2.0%`, `ADA 0.0%`, `LINK 4.0%`, `TRX 4.0%`
 
 ## Risk caps (optional)
 
@@ -343,6 +349,18 @@ If a position has been held for at least that many daily candles and is still be
 
 For altcoins, `risk_off` still blocks new buys. The ratio is mainly relevant for BTC or future regime-aware expansions.
 
+## Optional Tactical Add-ons
+
+Two extra execution paths exist but are disabled by default:
+
+- Partial sell: when RSI enters `sell_threshold - PARTIAL_SELL_RSI_OFFSET` through the sell threshold, the bot can sell `PARTIAL_SELL_PCT` of the position once per open position.
+- DCA: if RSI drops by at least `DCA_STEP_RSI` below the last recorded buy RSI, the bot can add up to `MAX_DCA_COUNT` extra buys using `DCA_ORDER_SIZE_RATIO` of available KRW each time.
+
+Operational note:
+- a full sell removes the position row and resets these guards naturally
+- partial sell state is tracked in `positions.partial_sell_done`
+- `/dca` reports current DCA counters and next trigger RSI for open positions
+
 ## Testing
 
 ```bash
@@ -350,7 +368,7 @@ PYTHONPATH=. pytest -q
 ```
 
 Current local regression status:
-- `107 passed`
+- `116 passed`
 
 ---
 
@@ -374,7 +392,7 @@ pip install -r requirements.txt
 
 ```bash
 cp .env.example .env
-# Fill in your API keys
+# Fill in your API keys and adjust optional runtime flags as needed
 ```
 
 ```env
@@ -407,6 +425,7 @@ Detailed operator guide: [docs/superpowers/telegram-commands.md](docs/superpower
 | `/balance` | Current positions + KRW balance |
 | `/status` | Runtime status, RSI, P&L, selection score, blocked summary |
 | `/performance` | Recent 7/14/30-day realized-performance summary for runtime-managed and base-enabled symbols |
+| `/dca` | Current DCA count, last buy RSI, and next trigger RSI for open positions |
 
 Automated alerts: trade executions, low balance warnings, disk warnings, daily 9:00 KST portfolio report, daily 9:05 KST realized-performance summary, runtime auto-apply result notifications.
 

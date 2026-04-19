@@ -1,5 +1,32 @@
 # coin_bot 구현 현황
 
+## 2026-04-19: 런타임 재선정 기본값을 4종 코어에 정렬
+
+### auto-reselect 정책 정렬 (`backtesting/reselect_runtime.py`, `deploy/systemd/coinbot-runtime-report.service`)
+- 런타임 스냅샷이 이미 `BCH / ADA / LINK / TRX` 4종 코어를 사용하고 있었는데, 자동 재선정 기본값은 여전히 `top_n=3` 이었다.
+- `DEFAULT_TOP_N` 을 `4`로 올리고, EC2 systemd 리포트 서비스 실행 인자도 `--top-n 4` 로 맞췄다.
+- 이제 다음 자동 리포트/auto-apply 배치가 문서와 현재 운영 스냅샷을 그대로 따르도록 정렬됐다.
+
+### 문서 정합성 보강 (`README.md`)
+- README에 더 이상 `top_n=3` caveat를 남기지 않고, 기본 자동 재선정 경로가 4종 코어와 일치한다고 명시했다.
+
+### EC2 반영 / 실서버 확인
+- `rsync`로 현재 워크트리를 `ubuntu@43.203.205.237:/home/ubuntu/coin_bot`에 동기화했다.
+- `coinbot-runtime-report.service`, `coinbot-runtime-report.timer`를 `/etc/systemd/system/`에 복사하고 `sudo systemctl daemon-reload` 후 재적용했다.
+- `coinbot` 및 `coinbot-runtime-report.timer`는 모두 `active` 상태를 확인했다.
+- 원격 unit과 실제 실행 중인 one-shot 프로세스 커맨드라인이 모두 `--top-n 4` 를 사용함을 확인했다.
+- 재시작 후 `/api/runtime/status` 응답도 정상 확인했다.
+- 확인 시점 기준 `coinbot-runtime-report.service` one-shot은 아직 `activating` 상태였고, 기존 `2026-04-19-runtime-universe.md` 본문은 이전 `top_n=3` 결과를 유지하고 있었다. 새 실행이 완료되면 `top_n=4` 기준으로 다시 써질 상태다.
+- 별도 검증용으로 EC2에서 `python -m backtesting.reselect_runtime --refresh-from-backend-snapshot --top-n 4 --write-report /tmp/coinbot-runtime-universe-top4-check.md` 를 실행했고, 생성된 report 헤더가 `Top-N setting: 4` 와 4개 enabled 심볼(`TRX/BCH/ADA/LINK`)을 출력함을 확인했다.
+
+### Claude Code 보조 검토
+- 로컬 `claude` CLI 실행은 이번 세션에서도 `Not logged in · Please run /login` 으로 실패했다.
+- 실패 결과와 프롬프트는 `.omx/artifacts/claude-runtime-review-20260419-135728.md` 에 기록했다.
+
+### 테스트 / 검증
+- `PYTHONPATH=. pytest -q` → **116 passed**
+- `python -m compileall backend backtesting tests` 통과
+
 ## 2026-04-18: DCA 분할매수 + 분할 매도 + TRX 활성화
 
 ### DCA 분할매수 (`backend/config.py`, `backend/database.py`, `backend/execution/coin_executor.py`, `backend/orchestrator.py`)

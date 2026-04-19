@@ -1,96 +1,79 @@
 # coin_bot — 작업 메모 (에이전트/인간 공용)
 
-최종 정리: **2026-04-09**
+최종 정리: **2026-04-19**
 
 ## 프로젝트 한 줄
 
-업비트 일봉 RSI 자동매매 봇(FastAPI, PostgreSQL, 텔레그램). EC2에서 60초 루프.
+업비트 일봉 RSI 자동매매 봇(FastAPI, PostgreSQL, 텔레그램). EC2에서 60초 순회하며, 실운영은 단기 전술형 코어 유니버스 중심으로 굴린다.
 
-## 최근에 바뀐 중요 사항
+## 지금 중요한 운영 상태
 
-### 소액 시드 집중 전략
+### 전략 / 유니버스
 
-- 백테스터와 실운영을 **RSI 단독 진입/청산** 기준으로 다시 정렬.
-- `backtesting/simulator.py`의 MA 데드크로스 매도를 제거해서 실운영 로직과 맞춤.
-- 실운영 RSI 신호는 **현재 진행 중인 일봉이 아니라 마지막 확정 일봉**만 사용.
-- `signal_locks` 테이블로 같은 확정 일봉의 중복 BUY/SELL을 막음.
-- 텔레그램 `/status`와 런타임 상태도 같은 확정 일봉 RSI를 표시.
-- 자동선정 로직 적용 후 현재 기본 유니버스는 **BCH / LINK / ADA**.
-- `backend/config.py`
-  - `target_position_budget_krw` (기본 50,000)
-  - `min_order_amount_krw`, `max_order_amount_krw`
-- `backend/orchestrator.py`
-  - 총자산 기준 **실효 포지션 수 상한** 계산
-  - 여러 BUY 신호 동시 발생 시 **과매도 강도 + 백테스트 메타** 기준 우선순위
-  - 남은 슬롯이 적으면 매수 비중을 자동으로 높여서 시드 분산 완화
-  - 같은 확정 일봉에서 재진입/재청산 방지
-- `backtesting/reselect_runtime.py`
-  - 조건 통과식이 아니라 **점수 기반 상위 N 선발**
-  - 현재 `top_n=3`
-- `time stop`
-  - `max_hold_days=10`
-  - `time_stop_min_pnl_pct=0.0`
-  - 오래 묶였는데 수익 전환 못 한 포지션 정리용
-- `live derating`
-  - 최근 30일 SELL 실적 기준 신규매수 일시 차단
-  - 기본 유니버스 위에 실전 성과 오버레이를 얹는 구조
-  - `/status`와 runtime API에서 `selection_score`, `live_derated` 상태를 바로 볼 수 있음
-- `live feedback loop`
-  - 최근 실전 성과를 `live_score_adjustment` 로 환산
-  - `effective_selection_score` 로 진입 우선순위까지 반영
-- `/status`
-  - 선발 종목은 `effective_selection_score`
-  - 제외 종목은 `live` / `score` 이유 요약
-  - 상단 상태판으로 각 종목 상태 라벨 요약
-- `loss streak cooldown`
-  - 최근 연속 손실 2회 이상이면 7일 신규매수 차단
-  - runtime/API/텔레그램에 `loss_streak_cooled` 로 노출
-- `runtime report automation`
-  - `python -m backtesting.reselect_runtime --write-report`
-  - `docs/superpowers/reports/YYYY-MM-DD-runtime-universe.md` 생성
-- `runtime report scheduler`
-  - EC2 systemd timer로 매일 `09:15 KST` 자동 생성
-  - 현재는 `--auto-apply-runtime` 포함
-  - 안전 게이트 통과 시 `runtime_params.json` 자동 갱신
-  - `runtime_params.py` 는 mtime 변경 감지로 자동 재로드
-  - auto-apply 결과는 텔레그램으로도 알림
-  - EC2 수동 실행에서 `📨 sent Telegram notification` 확인
-- 현재 기본 생각:
-  - BTC는 **장세 필터 전용**
-  - 소액 시드일수록 종목 수를 늘리기보다 **소수 핵심 종목 집중**이 우선
+- 실운영 신호는 **현재 진행 중인 일봉이 아니라 마지막 확정 일봉**만 사용.
+- `signal_locks`로 같은 확정 일봉의 중복 BUY/SELL을 방지.
+- BTC는 기본적으로 **장세 필터 전용**이며 신규매수 기본 대상은 아님.
+- 현재 전술 코어 스냅샷은 **BCH / ADA / LINK / TRX** 4종.
+- 자동 재선정 기본값도 이제 `top_n=4`로 정렬되어, live snapshot과 auto-apply 기본 경로가 맞는다.
+- 다만 실제 신규매수 허용 심볼은 `live_derated`, `loss_streak_cooled`, `manual_override` 같은 실전 오버레이 때문에 더 좁아질 수 있다.
 
-### EC2 반영 상태
+### 리스크 / 주문 / 포지션
 
-- 서버: `43.203.205.237`
-- 배포 경로: `/home/ubuntu/coin_bot`
-- 확인:
-  - `systemctl is-active coinbot` → `active`
-  - 로그에 `runtime params loaded ... /home/ubuntu/coin_bot/backend/runtime_params.json`
+- 소액 시드는 분산보다 **집중 배분** 우선.
+- `target_position_budget_krw` 기반으로 총자산 대비 **실효 최대 포지션 수**를 계산.
+- 여러 BUY 신호가 동시에 뜨면 **과매도 강도 + selection 메타** 기준으로 우선순위를 정함.
+- `max_open_positions`, `max_buys_per_day`로 운영 리스크 캡 적용 가능.
+- 주문 실행은 `order_journal`과 `trades.order_uuid` 기반으로 복구 가능하게 되어 있음.
+- 수동 보유 종목은 `manual_holdings`에서 추적하고, 정책은 `alert_only|import|ignore`.
+- imported 수동 포지션은 `positions.source='manual_import'`.
+
+### 추가 실행 경로
+
+- **DCA 분할매수**
+  - 기본 비활성화 (`DCA_ENABLED=false`)
+  - 직전 매수 RSI보다 `DCA_STEP_RSI` 이상 더 빠지면 추가매수
+  - `MAX_DCA_COUNT`, `DCA_ORDER_SIZE_RATIO` 사용
+- **분할 매도**
+  - 기본 비활성화 (`PARTIAL_SELL_ENABLED=false`)
+  - RSI가 `sell_threshold - PARTIAL_SELL_RSI_OFFSET` 구간에 들어오면 `PARTIAL_SELL_PCT`만큼 1회 부분 청산
+  - 상태는 `positions.partial_sell_done`
 
 ### 런타임 파라미터 단일 소스
 
 - 파일: `backend/runtime_params.json`
-- 코드: `backend/runtime_params.py` (`RUNTIME_PARAMS_PATH`로 경로 오버라이드 가능)
-- 종목별 **신규 매수 허용**, 사유, OOS 메타, **RSI 매수/매도**, **트레일링 활성화% / 손절%** 를 이 JSON에서만 관리.
-- 연구 후 유니버스·OOS 필드만 갱신:  
-  `PYTHONPATH=. python -m backtesting.reselect_runtime --write-backend`  
-  (RSI·트레일링 키는 스크립트가 덮어쓰지 않음)
-- JSON 수정 후 **프로세스 재시작** 필요 (모듈 캐시).
+- 코드: `backend/runtime_params.py`
+- `RUNTIME_PARAMS_PATH`로 경로 오버라이드 가능
+- 종목별 신규매수 허용, 사유, OOS 메타, RSI, 익절/트레일링/손절 파라미터를 이 JSON에서 관리
+- 일반적인 파일 수정은 `runtime_params.py`가 mtime 감지로 **자동 재로드**하므로 보통 재시작이 필요 없다
+- 텔레그램 watchlist 명령도 write 후 즉시 reload를 강제한다
 
-### 업비트 주문 안정성
+## 텔레그램 / 상태면
 
-- `backend/execution/coin_executor.py`: 시장가 주문 **3회 재시도**, `get_order` **폴링**(최대 10회)으로 체결 확인.
+- 운영 명령:
+  - `/status`
+  - `/performance`
+  - `/watchlist`
+  - `/watchlist_remove <symbol>`
+  - `/watchlist_add <symbol>`
+  - `/list`
+  - `/dca`
+- `/status`는 `effective_selection_score`, blocked summary, 상태판, 최근 실현 성과 요약까지 보여준다.
+- `/performance`는 최근 `7/14/30일` 실현 성과를 요약한다.
 
-### 운영 리스크 캡
+## EC2 상태
 
-- `backend/risk_limits.py` + `backend/config.py`
-- `max_open_positions` (기본 12): 신규 심볼 매수 시 DB 포지션 개수 상한. **0 = 비활성화**
-- `max_buys_per_day` (기본 48): KST 당일 `trades`의 BUY 건수 상한. **0 = 비활성화**
-- 환경변수: `MAX_OPEN_POSITIONS`, `MAX_BUYS_PER_DAY`
-- 추가:
-  - `TARGET_POSITION_BUDGET_KRW`
-  - `MIN_ORDER_AMOUNT_KRW`
-  - `MAX_ORDER_AMOUNT_KRW`
+- 서버: `43.203.205.237`
+- 배포 경로: `/home/ubuntu/coin_bot`
+- 2026-04-19 기준:
+  - repo 동기화 완료
+  - `coinbot` restart 완료
+  - `coinbot-runtime-report.service` / `.timer`를 systemd에 재설치
+  - installed unit과 실제 실행 중인 one-shot 프로세스 모두 `--top-n 4`
+  - `/api/runtime/status` 응답 정상
+- 주의:
+  - full research 기반 `coinbot-runtime-report.service`는 오래 걸리는 배치다
+  - 그래서 특정 시점에는 unit/proc는 새 값(`--top-n 4`)인데, 기존 날짜 report 본문은 이전 실행 결과를 잠시 유지할 수 있다
+  - 이 경우 snapshot-only 검증 (`--refresh-from-backend-snapshot`)으로 새 렌더링 결과를 먼저 확인할 수 있다
 
 ## 자주 쓰는 명령
 
@@ -99,15 +82,17 @@ PYTHONPATH=. pytest -q
 PYTHONPATH=. python -m backtesting.optimize
 PYTHONPATH=. python -m backtesting.reselect_runtime
 PYTHONPATH=. python -m backtesting.reselect_runtime --write-backend
+PYTHONPATH=. python -m backtesting.reselect_runtime --refresh-from-backend-snapshot --top-n 4
 uvicorn backend.main:app --port 8002
 ```
 
-## 상세 이력
+## 문서 정본
 
-구현 날짜별 상세·맥락은 **`PROGRESS.md`** 가 정본.
+- 상세 구현/배포 이력: `PROGRESS.md`
+- 사용자/운영 안내: `README.md`
+- 텔레그램 운영 안내: `docs/superpowers/telegram-commands.md`
 
-## 다음 후보 고도화 (미구현)
+## 남은 관찰 포인트
 
-- 최근 OOS 기준 자동 유니버스 컷오프 규칙 정교화
-- 설정 정리(`config` 레거시 플래그 / 미사용 env 키)
-- 관측성(메트릭·구조화 로그)
+- EC2 full runtime-report one-shot 완료 후 해당 날짜 report 본문이 실제로 `Top-N setting: 4`로 다시 써졌는지 추후 확인
+- Claude CLI는 현재 로그인 안 된 상태라 교차 리뷰가 막혀 있음 (`claude /login` 필요)
