@@ -9,6 +9,10 @@ from backend.runtime_status import get_runtime_status
 
 logger = logging.getLogger(__name__)
 
+_MANUAL_HOLDING_DISCLAIMER = (
+    "수동보유는 거래소 실보유이지만 자동매매 포지션에는 미편입된 자산입니다."
+)
+
 
 def _is_allowed_chat(update: Update) -> bool:
     settings = get_settings()
@@ -93,6 +97,124 @@ def _format_symbol_performance_row(prefix: str, row: dict | None) -> str:
         f"{prefix}: {row['symbol'].split('-')[1]} "
         f"{row['realized_pnl_krw']:+,.0f}원 "
         f"(승률 {row['win_rate']:.1f}%, 평균 {row['avg_pnl_pct']:+.2f}%, 매도 {row['sell_count']}회)"
+    )
+
+
+def _coin_ticker(symbol: str) -> str:
+    return symbol.split("-")[1] if "-" in symbol else symbol
+
+
+def _load_coin_position_rows() -> list[dict]:
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT symbol, entry_price, quantity FROM positions WHERE market = 'coin'")
+        return [
+            {
+                "symbol": row["symbol"],
+                "entry_price": float(row["entry_price"] or 0.0),
+                "quantity": float(row["quantity"] or 0.0),
+                "source": "position",
+            }
+            for row in cur.fetchall()
+        ]
+
+
+def _load_manual_holdings_from_db(tracked_symbols: set[str]) -> tuple[bool, list[dict]]:
+    """manual_holdings 테이블에서 active 수동보유 조회 (tracked 제외). 실패 시 False + []."""
+    try:
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT symbol, quantity, avg_buy_price FROM manual_holdings"
+                " WHERE status IN ('alert_only', 'import')"
+            )
+            rows = cur.fetchall()
+        return True, [
+            {
+                "symbol": row["symbol"],
+                "entry_price": float(row["avg_buy_price"] or 0.0),
+                "quantity": float(row["quantity"] or 0.0),
+                "source": "manual",
+            }
+            for row in rows
+            if row["symbol"] not in tracked_symbols
+        ]
+    except Exception as e:
+        logger.warning(f"manual_holdings DB 조회 실패: {e}")
+        return False, []
+
+
+def _load_exchange_only_holdings(executor, tracked_symbols: set[str]) -> tuple[bool, list[dict]]:
+    """수동보유 조회: DB 우선, 실패 시 Exchange API 폴백."""
+    db_ok, manual_rows = _load_manual_holdings_from_db(tracked_symbols)
+    if db_ok:
+        return True, manual_rows
+
+    logger.warning("manual_holdings DB 조회 실패 → Exchange API 폴백")
+    holdings_ok, exchange_holdings = executor.get_all_coin_holdings_snapshot()
+    if not holdings_ok:
+        logger.warning("거래소 실보유 조회 실패 — 수동보유 표시 미반영")
+        return False, []
+    manual_rows = []
+    for holding in exchange_holdings:
+        symbol = holding["symbol"]
+        if symbol in tracked_symbols:
+            continue
+        try:
+            manual_rows.append(
+                {
+                    "symbol": symbol,
+                    "entry_price": float(holding.get("avg_buy_price") or 0.0),
+                    "quantity": float(holding.get("quantity") or 0.0),
+                    "current_price": float(holding.get("current_price") or 0.0),
+                    "source": "manual",
+                }
+            )
+        except (ValueError, TypeError) as e:
+            logger.warning(f"수동보유 파싱 실패 ({symbol}): {e} → 스킵")
+    return True, manual_rows
+
+
+def _all_coin_rows(executor) -> tuple[list[dict], bool]:
+    try:
+        position_rows = _load_coin_position_rows()
+    except Exception as e:
+        logger.error(f"포지션 DB 조회 실패: {e}")
+        position_rows = []
+    tracked_symbols = {row["symbol"] for row in position_rows}
+    holdings_ok, manual_rows = _load_exchange_only_holdings(executor, tracked_symbols)
+    return position_rows + manual_rows, holdings_ok
+
+
+def _holding_line(
+    symbol: str,
+    entry_price: float,
+    quantity: float,
+    current_price: float,
+    *,
+    rsi: float = 0.0,
+    source: str = "position",
+) -> tuple[str, float, float]:
+    ticker = _coin_ticker(symbol)
+    source_suffix = " (수동보유)" if source == "manual" else ""
+    rsi_str = f" | RSI {rsi:.1f}" if rsi > 0 else ""
+    current = current_price or entry_price
+
+    if entry_price > 0 and current > 0:
+        pnl_pct = (current - entry_price) / entry_price * 100
+        pnl_krw = (current - entry_price) * quantity
+        pnl_icon = "📈" if pnl_pct >= 0 else "📉"
+        return (
+            f"{pnl_icon} {ticker}{source_suffix}: {pnl_pct:+.1f}% ({pnl_krw:+,.0f}원){rsi_str}",
+            entry_price * quantity,
+            current * quantity,
+        )
+
+    eval_value = current * quantity
+    return (
+        f"👀 {ticker}{source_suffix}: 수량 {quantity:.6f} | 평가 {eval_value:,.0f}원{rsi_str}",
+        0.0,
+        eval_value,
     )
 
 
@@ -204,13 +326,9 @@ async def send_daily_position_report():
         import pyupbit
         from backend.execution.coin_executor import CoinExecutor
 
-        with get_db() as conn:
-            cur = conn.cursor()
-            cur.execute("SELECT symbol, entry_price, quantity FROM positions WHERE market = 'coin'")
-            rows = cur.fetchall()
-
         executor = CoinExecutor()
         krw = executor.get_balance_krw()
+        rows, _ = _all_coin_rows(executor)
 
         lines = ["📋 일일 포지션 현황\n"]
 
@@ -219,21 +337,26 @@ async def send_daily_position_report():
             total_current = 0.0
             for row in rows:
                 symbol = row["symbol"]
-                entry = float(row["entry_price"])
-                qty = float(row["quantity"])
-                current = pyupbit.get_current_price(symbol) or entry
-                pnl_pct = (current - entry) / entry * 100
-                pnl_krw = (current - entry) * qty
-                pnl_icon = "📈" if pnl_pct >= 0 else "📉"
-                invested = entry * qty
-                total_invested += invested
-                total_current += current * qty
-                lines.append(
-                    f"{pnl_icon} {symbol.split('-')[1]}: {pnl_pct:+.1f}% ({pnl_krw:+,.0f}원)"
+                entry = float(row.get("entry_price") or 0.0)
+                qty = float(row.get("quantity") or 0.0)
+                current = float(row.get("current_price") or 0.0)
+                if not current:
+                    current = float(pyupbit.get_current_price(symbol) or entry)
+                line, invested, current_value = _holding_line(
+                    symbol,
+                    entry,
+                    qty,
+                    current,
+                    source=str(row.get("source") or "position"),
                 )
+                total_invested += invested
+                total_current += current_value
+                lines.append(line)
             total_pnl = total_current - total_invested
             total_pnl_pct = (total_current - total_invested) / total_invested * 100 if total_invested > 0 else 0
             lines.append(f"\n합산 미실현 손익: {total_pnl:+,.0f}원 ({total_pnl_pct:+.1f}%)")
+            if any(row.get("source") == "manual" for row in rows):
+                lines.append(_MANUAL_HOLDING_DISCLAIMER)
         else:
             lines.append("📭 보유 중인 코인 없음")
 
@@ -314,18 +437,19 @@ async def _balance_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         from backend.execution.coin_executor import CoinExecutor
         executor = CoinExecutor()
         krw_balance = float(executor.get_balance_krw() or 0)
-
-        with get_db() as conn:
-            cur = conn.cursor()
-            cur.execute("SELECT market, symbol, entry_price, quantity FROM positions")
-            rows = cur.fetchall()
+        rows, _ = _all_coin_rows(executor)
 
         lines = [f"💰 업비트 잔고: {krw_balance:,.0f}원\n"]
 
         if rows:
             lines.append("💼 보유 포지션")
             for row in rows:
-                lines.append(f"• {row['symbol']}: {float(row['quantity']):.6f} @ {float(row['entry_price']):,.0f}원")
+                suffix = " (수동보유)" if row.get("source") == "manual" else ""
+                lines.append(
+                    f"• {row['symbol']}{suffix}: {float(row['quantity']):.6f} @ {float(row['entry_price'] or 0):,.0f}원"
+                )
+            if any(row.get("source") == "manual" for row in rows):
+                lines.append(_MANUAL_HOLDING_DISCLAIMER)
         else:
             lines.append("📭 보유 중인 코인 없음")
 
@@ -346,14 +470,10 @@ async def _status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         from backend.ai.chart_generator import get_coin_signal_indicators
         from backend.execution.coin_executor import CoinExecutor
 
-        with get_db() as conn:
-            cur = conn.cursor()
-            cur.execute("SELECT symbol, entry_price, quantity FROM positions WHERE market = 'coin'")
-            rows = cur.fetchall()
-
         executor = CoinExecutor()
         krw = executor.get_balance_krw()
         runtime = get_runtime_status()
+        rows, _ = _all_coin_rows(executor)
 
         lines = ["📊 실시간 현황\n"]
 
@@ -362,27 +482,31 @@ async def _status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             total_current = 0.0
             for row in rows:
                 symbol = row["symbol"]
-                entry = float(row["entry_price"])
-                qty = float(row["quantity"])
+                entry = float(row.get("entry_price") or 0.0)
+                qty = float(row.get("quantity") or 0.0)
                 try:
                     indicators = get_coin_signal_indicators(symbol)
                     rsi = indicators.get("rsi", 0)
-                    current = pyupbit.get_current_price(symbol) or entry
+                    current = float(row.get("current_price") or 0.0) or float(pyupbit.get_current_price(symbol) or entry)
                 except Exception:
                     rsi = 0
-                    current = entry
-                pnl_pct = (current - entry) / entry * 100
-                pnl_krw = (current - entry) * qty
-                pnl_icon = "📈" if pnl_pct >= 0 else "📉"
-                total_invested += entry * qty
-                total_current += current * qty
-                rsi_str = f" | RSI {rsi:.1f}" if rsi > 0 else ""
-                lines.append(
-                    f"{pnl_icon} {symbol.split('-')[1]}: {pnl_pct:+.1f}% ({pnl_krw:+,.0f}원){rsi_str}"
+                    current = float(row.get("current_price") or 0.0) or entry
+                line, invested, current_value = _holding_line(
+                    symbol,
+                    entry,
+                    qty,
+                    current,
+                    rsi=float(rsi or 0.0),
+                    source=str(row.get("source") or "position"),
                 )
+                total_invested += invested
+                total_current += current_value
+                lines.append(line)
             total_pnl = total_current - total_invested
             total_pnl_pct = (total_current - total_invested) / total_invested * 100 if total_invested > 0 else 0
             lines.append(f"\n합산: {total_pnl:+,.0f}원 ({total_pnl_pct:+.1f}%)")
+            if any(row.get("source") == "manual" for row in rows):
+                lines.append(_MANUAL_HOLDING_DISCLAIMER)
         else:
             lines.append("📭 보유 중인 코인 없음")
 

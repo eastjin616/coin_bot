@@ -1,5 +1,38 @@
 # coin_bot 구현 현황
 
+## 2026-04-19: 수동보유 표시 고도화 (DB-first + 에러 핸들링 + 테스트 보강)
+
+### DB-first 수동보유 조회 (`backend/telegram_bot.py`)
+- 기존: `/status`, `/balance`, 일일리포트가 매 요청마다 Exchange API 재호출
+- 변경: Orchestrator가 1분마다 동기화하는 `manual_holdings` 테이블을 우선 조회, DB 실패 시에만 Exchange API 폴백
+- `_load_manual_holdings_from_db(tracked_symbols)` 함수 추가
+- `_load_exchange_only_holdings()` DB-first → API fallback 구조로 리팩터링
+
+### 에러 핸들링 및 로깅 강화 (`backend/telegram_bot.py`, `backend/execution/coin_executor.py`)
+- `_all_coin_rows()`: positions DB 조회 실패 시 예외 catch + logger.error + 빈 리스트 폴백
+- `_load_exchange_only_holdings()`: DB/API 각 실패 경로에 logger.warning 추가
+- `_load_manual_holdings_from_db()`: 예외 발생 시 (False, []) 반환 + logger.warning
+- `get_all_coin_holdings_snapshot()`: `upbit=None` 케이스 `(True, [])` → `(False, [])` 버그 수정 + warning 로그
+- 현재가 부분 실패 시 warning 로그 추가
+
+### 메시지 중복 제거 (`backend/telegram_bot.py`)
+- `_MANUAL_HOLDING_DISCLAIMER` 모듈 상수 추가
+- 3곳에 흩어진 동일 메시지를 상수로 통일
+
+### 테스트 보강 (`tests/test_telegram_bot.py`)
+- 기존 `test_status_handler_includes_exchange_only_manual_holding`: DB-first 방식에 맞게 `_load_manual_holdings_from_db` 패치로 업데이트
+- `test_holding_line_manual_source_label`: "(수동보유)" 레이블 표시 확인
+- `test_holding_line_pnl_calculation`: 손익 계산 정확도 (entry/current/invested/current_val)
+- `test_holding_line_zero_entry_price_falls_back_to_eval`: entry_price=0 시 평가금액 표시
+- `test_load_manual_holdings_from_db_returns_rows_excluding_tracked`: tracked 심볼 제외 + source=manual
+- `test_load_manual_holdings_from_db_returns_false_on_exception`: DB 오류 시 (False, []) 반환
+- `test_load_exchange_only_holdings_falls_back_to_api_on_db_failure`: DB 실패 시 API 폴백
+- `test_all_coin_rows_db_exception_returns_empty_positions`: positions DB 예외 시 빈 리스트 폴백
+
+### 테스트 / 검증
+- `PYTHONPATH=. pytest -q` → **124 passed**
+- `python -m compileall backend tests` 통과
+
 ## 2026-04-19: 런타임 재선정 기본값을 4종 코어에 정렬
 
 ### auto-reselect 정책 정렬 (`backtesting/reselect_runtime.py`, `deploy/systemd/coinbot-runtime-report.service`)

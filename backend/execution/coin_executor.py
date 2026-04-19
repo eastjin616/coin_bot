@@ -448,7 +448,8 @@ class CoinExecutor:
     def get_all_coin_holdings_snapshot(self) -> tuple[bool, list[dict]]:
         """거래소 실보유 코인 목록과 조회 성공 여부를 함께 반환한다."""
         if not self.upbit:
-            return True, []
+            logger.warning("업비트 API 미연결 — 거래소 실보유 조회 불가")
+            return False, []
 
         try:
             balances = self.upbit.get_balances() or []
@@ -477,6 +478,9 @@ class CoinExecutor:
             )
 
         prices = get_current_prices_safe(symbols)
+        missing = [s for s in symbols if s not in prices]
+        if missing:
+            logger.warning(f"현재가 조회 부분 실패: {', '.join(missing)} → 평균매입가 대체")
 
         for row in holdings:
             current_price = prices.get(row["symbol"], row["avg_buy_price"])

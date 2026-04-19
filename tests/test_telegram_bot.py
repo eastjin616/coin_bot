@@ -3,14 +3,20 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from backend.telegram_bot import (
+    _MANUAL_HOLDING_DISCLAIMER,
+    _all_coin_rows,
     _blocked_selection_summary,
     _command_help_text,
     _format_signal_candle_label,
+    _holding_line,
     _list_handler,
+    _load_exchange_only_holdings,
+    _load_manual_holdings_from_db,
     _performance_handler,
     _performance_report_text,
     _start_handler,
     _stateboard_summary,
+    _status_handler,
     _top_selection_summary,
     _watchlist_add_handler,
     _watchlist_remove_handler,
@@ -189,3 +195,133 @@ def test_performance_handler_returns_report_for_allowed_chat():
         asyncio.run(_performance_handler(update, context))
 
     assert update.message.reply_text.await_args.args[0] == "perf report"
+
+
+def test_status_handler_includes_exchange_only_manual_holding():
+    update = _fake_update()
+    context = _fake_context()
+
+    mock_conn = MagicMock()
+    mock_cur = MagicMock()
+    mock_conn.cursor.return_value = mock_cur
+    mock_cur.fetchall.return_value = []
+
+    mock_db = MagicMock()
+    mock_db.__enter__.return_value = mock_conn
+    mock_db.__exit__.return_value = None
+
+    runtime_status = {
+        "regime": "risk_on",
+        "btc": {"signal_candle_time": "2026-04-18T09:00:00"},
+        "suggested_order_size_ratio": 0.2,
+        "buy_enabled_symbols": ["KRW-BCH"],
+        "selection": [
+            {"symbol": "KRW-BCH", "enabled": True, "state_label": "enabled", "effective_selection_score": 10.8},
+        ],
+        "live_derated_symbols": {},
+        "loss_streak_cooled_symbols": {},
+        "recent_30d": {"realized_pnl_krw": 0.0, "win_rate": 0.0, "sell_count": 0},
+    }
+
+    executor = MagicMock()
+    executor.get_balance_krw.return_value = 1.0
+
+    with patch("backend.telegram_bot._is_allowed_chat", return_value=True), \
+         patch("backend.telegram_bot.get_db", return_value=mock_db), \
+         patch("backend.telegram_bot._load_manual_holdings_from_db", return_value=(True, [{
+             "symbol": "KRW-ETH",
+             "entry_price": 3_000_000.0,
+             "quantity": 0.123456,
+             "source": "manual",
+         }])), \
+         patch("backend.telegram_bot.get_runtime_status", return_value=runtime_status), \
+         patch("backend.execution.coin_executor.CoinExecutor", return_value=executor), \
+         patch("backend.ai.chart_generator.get_coin_signal_indicators", return_value={"rsi": 55.0}), \
+         patch("pyupbit.get_current_price", return_value=3_300_000.0):
+        asyncio.run(_status_handler(update, context))
+
+    final_text = update.message.reply_text.await_args_list[-1].args[0]
+    assert "ETH (수동보유)" in final_text
+    assert "📭 보유 중인 코인 없음" not in final_text
+    assert "자동매매 포지션에는 미편입" in final_text
+
+
+# ── 신규 테스트 ──────────────────────────────────────────────────────────────
+
+
+def test_holding_line_manual_source_label():
+    line, _, _ = _holding_line("KRW-ETH", 3_000_000.0, 1.0, 3_300_000.0, source="manual")
+    assert "(수동보유)" in line
+    assert "ETH" in line
+
+
+def test_holding_line_pnl_calculation():
+    line, invested, current_val = _holding_line(
+        "KRW-BCH", 500_000.0, 2.0, 550_000.0, source="position"
+    )
+    assert "+10.0%" in line
+    assert invested == 1_000_000.0
+    assert current_val == 1_100_000.0
+
+
+def test_holding_line_zero_entry_price_falls_back_to_eval():
+    line, invested, current_val = _holding_line("KRW-ETH", 0.0, 1.0, 3_000_000.0)
+    assert "👀" in line
+    assert invested == 0.0
+    assert current_val == 3_000_000.0
+
+
+def test_load_manual_holdings_from_db_returns_rows_excluding_tracked():
+    mock_conn = MagicMock()
+    mock_cur = MagicMock()
+    mock_conn.cursor.return_value = mock_cur
+    mock_cur.fetchall.return_value = [
+        {"symbol": "KRW-ETH", "quantity": 1.0, "avg_buy_price": 3_000_000.0},
+        {"symbol": "KRW-BTC", "quantity": 0.01, "avg_buy_price": 90_000_000.0},
+    ]
+    mock_db = MagicMock()
+    mock_db.__enter__.return_value = mock_conn
+    mock_db.__exit__.return_value = None
+
+    with patch("backend.telegram_bot.get_db", return_value=mock_db):
+        ok, rows = _load_manual_holdings_from_db({"KRW-BTC"})
+
+    assert ok is True
+    assert len(rows) == 1
+    assert rows[0]["symbol"] == "KRW-ETH"
+    assert rows[0]["source"] == "manual"
+
+
+def test_load_manual_holdings_from_db_returns_false_on_exception():
+    with patch("backend.telegram_bot.get_db", side_effect=RuntimeError("DB down")):
+        ok, rows = _load_manual_holdings_from_db(set())
+
+    assert ok is False
+    assert rows == []
+
+
+def test_load_exchange_only_holdings_falls_back_to_api_on_db_failure():
+    executor = MagicMock()
+    executor.get_all_coin_holdings_snapshot.return_value = (
+        True,
+        [{"symbol": "KRW-ETH", "quantity": 1.0, "avg_buy_price": 3_000_000.0, "current_price": 3_300_000.0}],
+    )
+
+    with patch("backend.telegram_bot._load_manual_holdings_from_db", return_value=(False, [])):
+        ok, rows = _load_exchange_only_holdings(executor, set())
+
+    assert ok is True
+    assert len(rows) == 1
+    assert rows[0]["symbol"] == "KRW-ETH"
+    assert rows[0]["source"] == "manual"
+
+
+def test_all_coin_rows_db_exception_returns_empty_positions():
+    executor = MagicMock()
+
+    with patch("backend.telegram_bot._load_coin_position_rows", side_effect=RuntimeError("DB error")), \
+         patch("backend.telegram_bot._load_exchange_only_holdings", return_value=(True, [])):
+        rows, holdings_ok = _all_coin_rows(executor)
+
+    assert rows == []
+    assert holdings_ok is True
