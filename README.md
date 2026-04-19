@@ -12,6 +12,8 @@
 
 작업 요약·운영 메모(한글): [`MEMORY.md`](MEMORY.md) — 상세 변경 이력: [`PROGRESS.md`](PROGRESS.md).
 
+> **EC2 접속 참고:** SSH 키는 `~/Desktop/coin-bot-key.pem`. 포트 타임아웃 시 AWS 콘솔 → EC2 Instance Connect(브라우저) 사용.
+
 ## Overview
 
 A fully automated cryptocurrency trading bot that runs 24/7 on AWS EC2. It monitors 15 coins every 60 seconds on Upbit (Korean exchange), executes buy/sell orders based on RSI signals, and manages risk with per-coin trailing-stop/stop-loss thresholds validated via historical backtesting.

@@ -1,5 +1,25 @@
 # coin_bot 구현 현황
 
+## 2026-04-19: EC2 배포 + DCA/분할매도 활성화 + 백테스팅 갱신
+
+### EC2 배포
+- SSH 키 위치: `~/Desktop/coin-bot-key.pem` (기존 `~/Downloads/`에서 이동됨)
+- EC2 SSH 포트 타임아웃 이슈 → AWS EC2 Instance Connect(브라우저)로 접속
+- `git pull` 후 `sudo systemctl restart coinbot` → `active` 확인
+- 로그: `✅ 오케스트레이터 시작 (폴링 주기: 60초)`, `✅ 텔레그램 봇 polling 시작`
+
+### DCA / 분할매도 EC2 활성화
+- EC2 `.env`에 `DCA_ENABLED=true`, `PARTIAL_SELL_ENABLED=true` 추가
+- `sudo systemctl restart coinbot` 후 정상 기동 확인
+
+### 백테스팅 데이터 갱신 (진행 중)
+- EC2에서 `PYTHONPATH=. python -m backtesting.reselect_runtime --allow-fetch --top-n 4 --write-report --auto-apply-runtime` 실행
+- 15개 코인 × 8년치 일봉 데이터 업비트 API 다운로드 → 파라미터 최적화 → 유니버스 자동 재선정
+- 완료 시 텔레그램으로 auto-apply 결과 알림
+
+### 디스크 정리
+- EC2 디스크 사용량 81.2% → `sudo journalctl --vacuum-size=100M` + `sudo apt-get clean` 실행
+
 ## 2026-04-19: 수동보유 표시 고도화 (DB-first + 에러 핸들링 + 테스트 보강)
 
 ### DB-first 수동보유 조회 (`backend/telegram_bot.py`)
