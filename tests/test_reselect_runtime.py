@@ -149,6 +149,45 @@ def test_recommend_runtime_universe_respects_preferred_core_guard(monkeypatch):
     assert any("전술 코어 밖 자동선발 제외" in row["reason"] for row in result if row["symbol"] == "KRW-TRX")
 
 
+def test_recommend_runtime_universe_default_top_n_keeps_four_symbol_core(monkeypatch):
+    full_results = [
+        {"symbol": "KRW-LINK", "return_pct": 8.0, "num_trades": 50, "mdd": -8.0},
+        {"symbol": "KRW-BCH", "return_pct": 7.0, "num_trades": 50, "mdd": -8.0},
+        {"symbol": "KRW-ADA", "return_pct": 1.0, "num_trades": 50, "mdd": -8.0},
+        {"symbol": "KRW-TRX", "return_pct": 20.0, "num_trades": 50, "mdd": -8.0},
+        {"symbol": "KRW-SOL", "return_pct": 6.0, "num_trades": 50, "mdd": -8.0},
+    ]
+    walk_summaries = [
+        {"symbol": "KRW-LINK", "avg_test_return_pct": 0.6, "windows": 8},
+        {"symbol": "KRW-BCH", "avg_test_return_pct": 0.5, "windows": 8},
+        {"symbol": "KRW-ADA", "avg_test_return_pct": -1.5, "windows": 8},
+        {"symbol": "KRW-TRX", "avg_test_return_pct": 1.0, "windows": 8},
+        {"symbol": "KRW-SOL", "avg_test_return_pct": 0.1, "windows": 8},
+    ]
+    recent_oos = [
+        {"symbol": "KRW-LINK", "return_pct": -1.0},
+        {"symbol": "KRW-BCH", "return_pct": -1.5},
+        {"symbol": "KRW-ADA", "return_pct": -2.0},
+        {"symbol": "KRW-TRX", "return_pct": -0.2},
+        {"symbol": "KRW-SOL", "return_pct": -1.8},
+    ]
+
+    monkeypatch.setattr(
+        "backtesting.reselect_runtime.run_research",
+        lambda _symbols, cache_only=True: (full_results, walk_summaries, recent_oos),
+    )
+    monkeypatch.setattr(
+        "backtesting.reselect_runtime.preferred_runtime_core_symbols",
+        lambda path=None: {"KRW-LINK", "KRW-BCH", "KRW-ADA", "KRW-TRX"},
+    )
+
+    result = recommend_runtime_universe()
+    enabled = [row["symbol"] for row in result if row["enabled"]]
+
+    assert enabled == ["KRW-TRX", "KRW-LINK", "KRW-BCH", "KRW-ADA"]
+    assert all(symbol in enabled for symbol in {"KRW-LINK", "KRW-BCH", "KRW-ADA", "KRW-TRX"})
+
+
 def test_render_runtime_report_includes_enabled_and_blocked_sections():
     report = render_runtime_report(
         [

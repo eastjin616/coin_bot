@@ -9,7 +9,7 @@ from backtesting.optimize import run_research
 
 _BACKEND_PARAMS = Path(__file__).resolve().parent.parent / "backend" / "runtime_params.json"
 _REPORTS_DIR = Path(__file__).resolve().parent.parent / "docs" / "superpowers" / "reports"
-DEFAULT_TOP_N = 3
+DEFAULT_TOP_N = 4
 MIN_REALISTIC_RETURN_PCT = -5.0
 MIN_AVG_WALK_OOS_PCT = -1.0
 MIN_RECENT_OOS_PCT = -6.0
