@@ -12,10 +12,12 @@
 - EC2 `.env`에 `DCA_ENABLED=true`, `PARTIAL_SELL_ENABLED=true` 추가
 - `sudo systemctl restart coinbot` 후 정상 기동 확인
 
-### 백테스팅 데이터 갱신 (진행 중)
-- EC2에서 `PYTHONPATH=. python -m backtesting.reselect_runtime --allow-fetch --top-n 4 --write-report --auto-apply-runtime` 실행
-- 15개 코인 × 8년치 일봉 데이터 업비트 API 다운로드 → 파라미터 최적화 → 유니버스 자동 재선정
-- 완료 시 텔레그램으로 auto-apply 결과 알림
+### 백테스팅 데이터 갱신 ✅ 완료
+- EC2 SSH 간헐적 타임아웃 → EC2 Instance Connect(브라우저)로 접속
+- `coin_executor.py` upbit=None 버그(True→False) sed로 EC2 직접 수정 후 rsync로 최종 동기화
+- nohup 백그라운드로 실행 완료: 15개 코인 × 8년치 일봉 데이터 재분석
+- **결과:** ADA / BCH / LINK / TRX 4종 유지 (변경 없음, changed_count=0)
+- rsync 배포 + `sudo systemctl restart coinbot` → `active (running)` 확인 (PID 2937326)
 
 ### 디스크 정리
 - EC2 디스크 사용량 81.2% → `sudo journalctl --vacuum-size=100M` + `sudo apt-get clean` 실행
